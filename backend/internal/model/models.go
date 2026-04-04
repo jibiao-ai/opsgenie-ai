@@ -130,3 +130,20 @@ type EasyStackEndpoint struct {
 	Version     string         `gorm:"size:16" json:"version"`
 	IsActive    bool           `gorm:"default:true" json:"is_active"`
 }
+
+// AIProvider stores AI provider configurations (OpenAI, DeepSeek, Qwen, GLM, MiniMax, etc.)
+type AIProvider struct {
+	ID          uint           `gorm:"primarykey" json:"id"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	Name        string         `gorm:"size:64;not null;uniqueIndex" json:"name"`      // e.g. openai, deepseek, qwen, glm, minimax
+	Label       string         `gorm:"size:128;not null" json:"label"`                 // Display name, e.g. OpenAI, 通义千问
+	APIKey      string         `gorm:"size:512" json:"api_key"`                        // Stored as plaintext (masked on read)
+	BaseURL     string         `gorm:"size:512" json:"base_url"`
+	Model       string         `gorm:"size:128" json:"model"`
+	IsDefault   bool           `gorm:"default:false" json:"is_default"`
+	IsEnabled   bool           `gorm:"default:true" json:"is_enabled"`
+	Description string         `gorm:"size:256" json:"description"`
+	IconURL     string         `gorm:"size:512" json:"icon_url"`
+}

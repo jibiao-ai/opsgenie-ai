@@ -7,6 +7,7 @@ import SkillsPage from '../pages/SkillsPage';
 import WorkflowsPage from '../pages/WorkflowsPage';
 import ScheduledTasksPage from '../pages/ScheduledTasksPage';
 import UsersPage from '../pages/UsersPage';
+import AIModelsPage from '../pages/AIModelsPage';
 import useStore from '../store/useStore';
 
 const pageComponents = {
@@ -17,6 +18,7 @@ const pageComponents = {
   workflows: WorkflowsPage,
   'scheduled-tasks': ScheduledTasksPage,
   users: UsersPage,
+  'ai-models': AIModelsPage,
 };
 
 export default function MainLayout() {

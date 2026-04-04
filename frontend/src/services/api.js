@@ -78,4 +78,9 @@ export const deleteUser = (id) => api.delete(`/users/${id}`);
 // Task Logs
 export const getTaskLogs = () => api.get('/task-logs');
 
+// AI Providers
+export const getAIProviders = () => api.get('/ai-providers');
+export const updateAIProvider = (id, data) => api.put(`/ai-providers/${id}`, data);
+export const testAIProvider = (id) => api.post(`/ai-providers/${id}/test`);
+
 export default api;

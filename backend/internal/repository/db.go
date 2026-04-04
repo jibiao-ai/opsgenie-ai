@@ -73,6 +73,7 @@ func InitDB(cfg config.DatabaseConfig) error {
 		&model.Workflow{},
 		&model.ScheduledTask{},
 		&model.EasyStackEndpoint{},
+		&model.AIProvider{},
 	)
 	if err != nil {
 		return fmt.Errorf("auto migration failed: %w", err)
@@ -181,6 +182,62 @@ func seedDefaultData(db *gorm.DB) {
 			db.Create(&a)
 		}
 		logger.Log.Info("Default agents created")
+	}
+
+	// Seed default AI providers
+	db.Model(&model.AIProvider{}).Count(&count)
+	if count == 0 {
+		providers := []model.AIProvider{
+			{
+				Name:        "openai",
+				Label:       "OpenAI",
+				BaseURL:     "https://api.openai.com/v1",
+				Model:       "gpt-4o",
+				IsDefault:   true,
+				IsEnabled:   true,
+				Description: "OpenAI GPT 系列模型，支持 GPT-4o、GPT-4、GPT-3.5 等",
+			},
+			{
+				Name:        "deepseek",
+				Label:       "DeepSeek",
+				BaseURL:     "https://api.deepseek.com/v1",
+				Model:       "deepseek-chat",
+				IsDefault:   false,
+				IsEnabled:   true,
+				Description: "深度求索 DeepSeek 系列模型，高性价比国产大模型",
+			},
+			{
+				Name:        "qwen",
+				Label:       "通义千问",
+				BaseURL:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
+				Model:       "qwen-plus",
+				IsDefault:   false,
+				IsEnabled:   true,
+				Description: "阿里云通义千问系列模型，支持 Qwen-Plus、Qwen-Max 等",
+			},
+			{
+				Name:        "glm",
+				Label:       "智谱 GLM",
+				BaseURL:     "https://open.bigmodel.cn/api/paas/v4",
+				Model:       "glm-4",
+				IsDefault:   false,
+				IsEnabled:   true,
+				Description: "智谱 AI GLM 系列模型，支持 GLM-4、GLM-4-Flash 等",
+			},
+			{
+				Name:        "minimax",
+				Label:       "MiniMax",
+				BaseURL:     "https://api.minimax.chat/v1",
+				Model:       "abab6.5s-chat",
+				IsDefault:   false,
+				IsEnabled:   true,
+				Description: "MiniMax 大模型，支持 abab6.5s-chat 等系列",
+			},
+		}
+		for _, p := range providers {
+			db.Create(&p)
+		}
+		logger.Log.Info("Default AI providers created")
 	}
 
 	// Create default skills

@@ -14,6 +14,7 @@ import {
   Menu,
   Globe,
   ChevronRight,
+  Cpu,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useNavigate } from 'react-router-dom';
@@ -25,6 +26,7 @@ const menuItems = [
   { id: 'skills', label: '技能', icon: Zap },
   { id: 'workflows', label: '工作流', icon: Workflow },
   { id: 'scheduled-tasks', label: '定时任务', icon: Clock },
+  { id: 'ai-models', label: 'AI 模型', icon: Cpu },
 ];
 
 const adminMenuItems = [

@@ -167,6 +167,11 @@ func main() {
 			// Task Logs
 			auth.GET("/task-logs", h.ListTaskLogs)
 
+			// AI Providers
+			auth.GET("/ai-providers", h.GetAIProviders)
+			auth.PUT("/ai-providers/:id", h.UpdateAIProvider)
+			auth.POST("/ai-providers/:id/test", h.TestAIProvider)
+
 			// Admin routes
 			admin := auth.Group("")
 			admin.Use(middleware.AdminMiddleware())

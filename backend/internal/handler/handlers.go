@@ -1,14 +1,19 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/jibiao-ai/cloud-agent/internal/model"
+	"github.com/jibiao-ai/cloud-agent/internal/repository"
 	"github.com/jibiao-ai/cloud-agent/internal/service"
 	"github.com/jibiao-ai/cloud-agent/pkg/logger"
 	"github.com/jibiao-ai/cloud-agent/pkg/response"
@@ -400,4 +405,199 @@ func (h *Handler) ListTaskLogs(c *gin.Context) {
 		return
 	}
 	response.Success(c, logs)
+}
+
+// ==================== AI Providers ====================
+
+// maskAPIKey masks all but the first 4 characters of an API key
+func maskAPIKey(key string) string {
+	if len(key) <= 4 {
+		return key
+	}
+	return key[:4] + "****"
+}
+
+// GetAIProviders returns all AI providers with masked API keys
+func (h *Handler) GetAIProviders(c *gin.Context) {
+	var providers []model.AIProvider
+	if err := repository.DB.Find(&providers).Error; err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	// Mask API keys before returning
+	type AIProviderView struct {
+		ID          uint      `json:"id"`
+		CreatedAt   time.Time `json:"created_at"`
+		UpdatedAt   time.Time `json:"updated_at"`
+		Name        string    `json:"name"`
+		Label       string    `json:"label"`
+		APIKey      string    `json:"api_key"` // masked
+		BaseURL     string    `json:"base_url"`
+		Model       string    `json:"model"`
+		IsDefault   bool      `json:"is_default"`
+		IsEnabled   bool      `json:"is_enabled"`
+		Description string    `json:"description"`
+		IconURL     string    `json:"icon_url"`
+		Configured  bool      `json:"configured"` // true if api_key is set
+	}
+
+	views := make([]AIProviderView, len(providers))
+	for i, p := range providers {
+		views[i] = AIProviderView{
+			ID:          p.ID,
+			CreatedAt:   p.CreatedAt,
+			UpdatedAt:   p.UpdatedAt,
+			Name:        p.Name,
+			Label:       p.Label,
+			APIKey:      maskAPIKey(p.APIKey),
+			BaseURL:     p.BaseURL,
+			Model:       p.Model,
+			IsDefault:   p.IsDefault,
+			IsEnabled:   p.IsEnabled,
+			Description: p.Description,
+			IconURL:     p.IconURL,
+			Configured:  p.APIKey != "",
+		}
+	}
+	response.Success(c, views)
+}
+
+// UpdateAIProvider updates provider config and optionally sets it as default
+func (h *Handler) UpdateAIProvider(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+
+	var req struct {
+		APIKey    string `json:"api_key"`
+		BaseURL   string `json:"base_url"`
+		Model     string `json:"model"`
+		IsDefault bool   `json:"is_default"`
+		IsEnabled bool   `json:"is_enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request")
+		return
+	}
+
+	var provider model.AIProvider
+	if err := repository.DB.First(&provider, id).Error; err != nil {
+		response.BadRequest(c, "provider not found")
+		return
+	}
+
+	// If api_key is provided (non-empty and not a masked value), update it
+	if req.APIKey != "" && req.APIKey != maskAPIKey(provider.APIKey) {
+		provider.APIKey = req.APIKey
+	}
+	if req.BaseURL != "" {
+		provider.BaseURL = req.BaseURL
+	}
+	if req.Model != "" {
+		provider.Model = req.Model
+	}
+	provider.IsEnabled = req.IsEnabled
+
+	// Handle default: unset all others first if setting as default
+	if req.IsDefault {
+		if err := repository.DB.Model(&model.AIProvider{}).Where("id != ?", id).Update("is_default", false).Error; err != nil {
+			response.InternalError(c, err.Error())
+			return
+		}
+		provider.IsDefault = true
+	} else {
+		provider.IsDefault = false
+	}
+
+	if err := repository.DB.Save(&provider).Error; err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	// Return masked view
+	provider.APIKey = maskAPIKey(provider.APIKey)
+	response.Success(c, provider)
+}
+
+// TestAIProvider sends a test request to the AI provider's API
+func (h *Handler) TestAIProvider(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+
+	var provider model.AIProvider
+	if err := repository.DB.First(&provider, id).Error; err != nil {
+		response.BadRequest(c, "provider not found")
+		return
+	}
+
+	if provider.APIKey == "" {
+		response.BadRequest(c, "API Key 未配置，请先保存 API Key")
+		return
+	}
+
+	baseURL := provider.BaseURL
+	if baseURL == "" {
+		response.BadRequest(c, "Base URL 未配置")
+		return
+	}
+
+	modelName := provider.Model
+	if modelName == "" {
+		modelName = "gpt-3.5-turbo"
+	}
+
+	// Build the test request payload (OpenAI-compatible chat completion)
+	payload := map[string]interface{}{
+		"model": modelName,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Hi"},
+		},
+		"max_tokens": 5,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	// Determine the chat completions endpoint
+	endpoint := fmt.Sprintf("%s/chat/completions", baseURL)
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(payloadBytes))
+	if err != nil {
+		response.InternalError(c, fmt.Sprintf("创建请求失败: %v", err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+
+	// Execute with a 15-second timeout
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log.Warnf("AI provider test failed for %s: %v", provider.Name, err)
+		response.BadRequest(c, fmt.Sprintf("连接失败: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		response.Success(c, gin.H{
+			"status":  "ok",
+			"message": "连接成功，API Key 有效",
+		})
+		return
+	}
+
+	// Parse error response
+	var errResp map[string]interface{}
+	json.Unmarshal(bodyBytes, &errResp)
+	errMsg := fmt.Sprintf("API 返回错误 (HTTP %d)", resp.StatusCode)
+	if errResp != nil {
+		if e, ok := errResp["error"]; ok {
+			if eMap, ok := e.(map[string]interface{}); ok {
+				if msg, ok := eMap["message"].(string); ok {
+					errMsg = msg
+				}
+			}
+		}
+	}
+	response.BadRequest(c, errMsg)
 }
