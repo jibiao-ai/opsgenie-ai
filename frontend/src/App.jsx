@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import useStore from './store/useStore';
 import LoginPage from './pages/LoginPage';
@@ -11,6 +11,13 @@ function PrivateRoute({ children }) {
 }
 
 export default function App() {
+  const theme = useStore((s) => s.theme);
+
+  // Apply saved theme on app startup
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
   return (
     <>
       <Toaster position="top-center" />
