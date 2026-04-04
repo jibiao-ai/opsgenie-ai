@@ -15,6 +15,25 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ===== Theme CSS Variables ===== */
+[data-theme="light"] {
+  --bg-main: #ffffff;
+  --bg-sidebar: #f8f7ff;
+  --text-main: #1a1a2e;
+}
+
+[data-theme="dark"] {
+  --bg-main: #0f0e17;
+  --bg-sidebar: #1a1830;
+  --text-main: #e8e6f0;
+}
+
+[data-theme="blue"] {
+  --bg-main: #0d1b4b;
+  --bg-sidebar: #0a1340;
+  --text-main: #e8eeff;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -95,7 +114,7 @@ body {
 }
 
 .chat-message blockquote {
-  border-left: 3px solid #3b82f6;
+  border-left: 3px solid #513CC8;
   padding-left: 12px;
   color: #64748b;
   margin: 8px 0;
@@ -113,7 +132,7 @@ body {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: #513CC8;
   margin: 0 2px;
 }
 
@@ -122,7 +141,7 @@ body {
 
 /* Sidebar active state */
 .sidebar-item.active {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
-  border-right: 3px solid #3b82f6;
+  background: rgba(81, 60, 200, 0.1);
+  color: #513CC8;
+  border-right: 3px solid #513CC8;
 }

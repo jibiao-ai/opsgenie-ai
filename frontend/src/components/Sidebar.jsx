@@ -7,26 +7,24 @@ import {
   Workflow,
   Clock,
   Users,
-  Shield,
-  Key,
   LogOut,
   User,
   Menu,
-  Globe,
-  ChevronRight,
   Cpu,
+  Cloud,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useNavigate } from 'react-router-dom';
 
 const menuItems = [
   { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
-  { id: 'chat', label: '对话', icon: MessageSquare },
+  { id: 'chat', label: '即时对话', icon: MessageSquare },
   { id: 'agents', label: '智能体', icon: Bot },
-  { id: 'skills', label: '技能', icon: Zap },
+  { id: 'skills', label: '技能中心', icon: Zap },
   { id: 'workflows', label: '工作流', icon: Workflow },
   { id: 'scheduled-tasks', label: '定时任务', icon: Clock },
-  { id: 'ai-models', label: 'AI 模型', icon: Cpu },
+  { id: 'ai-models', label: '模型配置', icon: Cpu },
+  { id: 'cloud-platforms', label: '接入云平台', icon: Cloud },
 ];
 
 const adminMenuItems = [
@@ -45,15 +43,12 @@ export default function Sidebar() {
   return (
     <div className={`flex flex-col bg-white border-r border-gray-200 transition-all duration-300 ${sidebarCollapsed ? 'w-16' : 'w-56'}`}>
       {/* Header */}
-      <div className="flex items-center h-14 px-4 border-b border-gray-200 bg-blue-600">
-        <button onClick={toggleSidebar} className="text-white hover:bg-blue-700 p-1 rounded">
+      <div className="flex items-center h-16 px-4 border-b border-gray-200 bg-primary">
+        <button onClick={toggleSidebar} className="text-white hover:bg-primary-700 p-1 rounded">
           <Menu className="w-5 h-5" />
         </button>
         {!sidebarCollapsed && (
-          <h1 className="ml-3 text-white font-semibold text-sm whitespace-nowrap">AI Agent Platform</h1>
-        )}
-        {!sidebarCollapsed && (
-          <Globe className="w-4 h-4 text-blue-200 ml-auto cursor-pointer" />
+          <h1 className="ml-3 text-white font-semibold text-sm whitespace-nowrap">AIOPS智能运维平台</h1>
         )}
       </div>
 
@@ -68,12 +63,12 @@ export default function Sidebar() {
               onClick={() => setActivePage(item.id)}
               className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
                 isActive
-                  ? 'bg-blue-50 text-blue-600 border-r-3 border-blue-600'
+                  ? 'bg-primary-50 text-primary border-r-2 border-primary'
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
               }`}
               title={sidebarCollapsed ? item.label : undefined}
             >
-              <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-gray-400'}`} />
+              <Icon className={`w-5 h-5 ${isActive ? 'text-primary' : 'text-gray-400'}`} />
               {!sidebarCollapsed && (
                 <span className="ml-3 whitespace-nowrap">{item.label}</span>
               )}
@@ -100,12 +95,12 @@ export default function Sidebar() {
                   onClick={() => setActivePage(item.id)}
                   className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
                     isActive
-                      ? 'bg-blue-50 text-blue-600 border-r-3 border-blue-600'
+                      ? 'bg-primary-50 text-primary border-r-2 border-primary'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
-                  <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-gray-400'}`} />
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-primary' : 'text-gray-400'}`} />
                   {!sidebarCollapsed && (
                     <span className="ml-3 whitespace-nowrap">{item.label}</span>
                   )}
@@ -119,8 +114,8 @@ export default function Sidebar() {
       {/* User section */}
       <div className="border-t border-gray-200 p-3">
         <div className="flex items-center">
-          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-            <User className="w-4 h-4 text-blue-600" />
+          <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
+            <User className="w-4 h-4 text-primary" />
           </div>
           {!sidebarCollapsed && (
             <div className="ml-3 flex-1 min-w-0">
