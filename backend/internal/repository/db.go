@@ -200,61 +200,143 @@ func seedDefaultData(db *gorm.DB) {
 		logger.Log.Info("Default agents created")
 	}
 
-	// Seed default AI providers
-	db.Model(&model.AIProvider{}).Count(&count)
-	if count == 0 {
-		providers := []model.AIProvider{
-			{
-				Name:        "openai",
-				Label:       "OpenAI",
-				BaseURL:     "https://api.openai.com/v1",
-				Model:       "gpt-4o",
-				IsDefault:   true,
-				IsEnabled:   true,
-				Description: "OpenAI GPT 系列模型，支持 GPT-4o、GPT-4、GPT-3.5 等",
-			},
-			{
-				Name:        "deepseek",
-				Label:       "DeepSeek",
-				BaseURL:     "https://api.deepseek.com/v1",
-				Model:       "deepseek-chat",
-				IsDefault:   false,
-				IsEnabled:   true,
-				Description: "深度求索 DeepSeek 系列模型，高性价比国产大模型",
-			},
-			{
-				Name:        "qwen",
-				Label:       "通义千问",
-				BaseURL:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
-				Model:       "qwen-plus",
-				IsDefault:   false,
-				IsEnabled:   true,
-				Description: "阿里云通义千问系列模型，支持 Qwen-Plus、Qwen-Max 等",
-			},
-			{
-				Name:        "glm",
-				Label:       "智谱 GLM",
-				BaseURL:     "https://open.bigmodel.cn/api/paas/v4",
-				Model:       "glm-4",
-				IsDefault:   false,
-				IsEnabled:   true,
-				Description: "智谱 AI GLM 系列模型，支持 GLM-4、GLM-4-Flash 等",
-			},
-			{
-				Name:        "minimax",
-				Label:       "MiniMax",
-				BaseURL:     "https://api.minimax.chat/v1",
-				Model:       "abab6.5s-chat",
-				IsDefault:   false,
-				IsEnabled:   true,
-				Description: "MiniMax 大模型，支持 abab6.5s-chat 等系列",
-			},
-		}
-		for _, p := range providers {
+	// Seed default AI providers — insert if name not exists
+	defaultProviders := []model.AIProvider{
+		{
+			Name:        "openai",
+			Label:       "OpenAI",
+			BaseURL:     "https://api.openai.com/v1",
+			Model:       "gpt-4o",
+			IsDefault:   true,
+			IsEnabled:   true,
+			Description: "OpenAI GPT 系列模型，支持 GPT-4o、GPT-4、GPT-3.5 等",
+		},
+		{
+			Name:        "deepseek",
+			Label:       "DeepSeek",
+			BaseURL:     "https://api.deepseek.com/v1",
+			Model:       "deepseek-chat",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "深度求索 DeepSeek 系列模型，高性价比国产大模型",
+		},
+		{
+			Name:        "qwen",
+			Label:       "通义千问",
+			BaseURL:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			Model:       "qwen-plus",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "阿里云通义千问系列模型，支持 Qwen-Plus、Qwen-Max 等",
+		},
+		{
+			Name:        "glm",
+			Label:       "智谱 GLM",
+			BaseURL:     "https://open.bigmodel.cn/api/paas/v4",
+			Model:       "glm-4",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "智谱 AI GLM 系列模型，支持 GLM-4、GLM-4-Flash 等",
+		},
+		{
+			Name:        "minimax",
+			Label:       "MiniMax",
+			BaseURL:     "https://api.minimax.chat/v1",
+			Model:       "abab6.5s-chat",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "MiniMax 大模型，支持 abab6.5s-chat 等系列",
+		},
+		{
+			Name:        "siliconflow",
+			Label:       "硅基流动 SiliconFlow",
+			BaseURL:     "https://api.siliconflow.cn/v1",
+			Model:       "Qwen/Qwen2.5-7B-Instruct",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "硅基流动，支持 Qwen、DeepSeek、GLM 等开源模型",
+		},
+		{
+			Name:        "moonshot",
+			Label:       "Moonshot AI (Kimi)",
+			BaseURL:     "https://api.moonshot.cn/v1",
+			Model:       "moonshot-v1-8k",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "Moonshot AI Kimi，支持超长上下文，moonshot-v1-8k/32k/128k",
+		},
+		{
+			Name:        "baidu",
+			Label:       "百度文心一言",
+			BaseURL:     "https://qianfan.baidubce.com/v2",
+			Model:       "ernie-4.5-8k",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "百度文心一言，支持 ERNIE 4.5、4.0、Speed 等系列",
+		},
+		{
+			Name:        "zhipu",
+			Label:       "智谱 ChatGLM",
+			BaseURL:     "https://open.bigmodel.cn/api/paas/v4",
+			Model:       "glm-4-flash",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "智谱 AI GLM-4，支持 glm-4、glm-4-flash、glm-4-plus",
+		},
+		{
+			Name:        "volcengine",
+			Label:       "火山引擎（豆包）",
+			BaseURL:     "https://ark.cn-beijing.volces.com/api/v3",
+			Model:       "doubao-pro-4k",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "字节跳动火山引擎豆包，支持 doubao-pro、doubao-lite 系列",
+		},
+		{
+			Name:        "hunyuan",
+			Label:       "腾讯混元",
+			BaseURL:     "https://api.hunyuan.cloud.tencent.com/v1",
+			Model:       "hunyuan-pro",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "腾讯混元大模型，支持 hunyuan-pro、hunyuan-standard",
+		},
+		{
+			Name:        "baichuan",
+			Label:       "百川智能",
+			BaseURL:     "https://api.baichuan-ai.com/v1",
+			Model:       "Baichuan4",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "百川智能，支持 Baichuan4、Baichuan3-Turbo 等",
+		},
+		{
+			Name:        "anthropic",
+			Label:       "Anthropic Claude",
+			BaseURL:     "https://api.anthropic.com/v1",
+			Model:       "claude-3-5-sonnet-20241022",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "Anthropic Claude 系列，claude-3-5-sonnet/haiku/opus",
+		},
+		{
+			Name:        "gemini",
+			Label:       "Google Gemini",
+			BaseURL:     "https://generativelanguage.googleapis.com/v1beta/openai",
+			Model:       "gemini-2.0-flash",
+			IsDefault:   false,
+			IsEnabled:   true,
+			Description: "Google Gemini，支持 gemini-2.0-flash、gemini-1.5-pro",
+		},
+	}
+	for _, p := range defaultProviders {
+		var existing model.AIProvider
+		if err := db.Where("name = ?", p.Name).First(&existing).Error; err != nil {
+			// Not found — insert
 			db.Create(&p)
 		}
-		logger.Log.Info("Default AI providers created")
 	}
+	logger.Log.Info("Default AI providers seeded")
 
 	// Create default skills
 	db.Model(&model.Skill{}).Count(&count)
