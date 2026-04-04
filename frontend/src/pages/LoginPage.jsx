@@ -20,7 +20,7 @@ export default function LoginPage() {
       if (res.code === 0) {
         setAuth(res.data.user, res.data.token);
         toast.success('登录成功');
-        navigate('/');
+        navigate('/', { replace: true });
       } else {
         toast.error(res.message || '登录失败');
       }
