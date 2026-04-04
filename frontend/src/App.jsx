@@ -7,7 +7,7 @@ import { Toaster } from 'react-hot-toast';
 
 function PrivateRoute({ children }) {
   const token = useStore((s) => s.token);
-  return token ? children : <Navigate to="/login" />;
+  return token ? children : <Navigate to="/login" replace />;
 }
 
 export default function App() {
