@@ -89,21 +89,37 @@ func InitDB(cfg config.DatabaseConfig) error {
 }
 
 func seedDefaultData(db *gorm.DB) {
-	// Create default admin user
-	var count int64
-	db.Model(&model.User{}).Count(&count)
-	if count == 0 {
-		admin := model.User{
+	// Ensure default admin user exists with correct bcrypt password hash.
+	// Uses upsert logic: if admin exists but has wrong/plaintext password, fix it.
+	const adminPasswordHash = "$2a$10$5HCtytk2H8rwfdEB9ysMcepF3tLhnpiPE5XoktVUMwMOgyF2quBlO" // admin123
+
+	var admin model.User
+	result := db.Where("username = ?", "admin").First(&admin)
+	if result.Error != nil {
+		// Admin not found — create it
+		admin = model.User{
 			Username: "admin",
-			Password: "$2a$10$5HCtytk2H8rwfdEB9ysMcepF3tLhnpiPE5XoktVUMwMOgyF2quBlO", // admin123
+			Password: adminPasswordHash,
 			Email:    "admin@cloudagent.local",
 			Role:     "admin",
 		}
 		db.Create(&admin)
 		logger.Log.Info("Default admin user created")
+	} else {
+		// Admin exists — ensure password is the correct bcrypt hash (fix plaintext / wrong hash)
+		if admin.Password != adminPasswordHash {
+			db.Model(&admin).Update("password", adminPasswordHash)
+			logger.Log.Info("Default admin user password reset to bcrypt hash")
+		}
+		// Ensure role is admin
+		if admin.Role != "admin" {
+			db.Model(&admin).Update("role", "admin")
+			logger.Log.Info("Default admin user role fixed to admin")
+		}
 	}
 
 	// Create default EasyStack ops agent
+	var count int64
 	db.Model(&model.Agent{}).Count(&count)
 	if count == 0 {
 		agents := []model.Agent{
