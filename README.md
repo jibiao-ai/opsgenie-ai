@@ -1,5 +1,10 @@
 # AIOPS 智能运维平台
 
+![version](https://img.shields.io/badge/version-v1.2.0-513CC8?style=flat-square)
+![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
+![go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)
+![react](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)
+
 > 基于 AI 大模型的智能云平台运维系统，支持多云接入、自然语言运维操作、自动化工作流。
 
 ## 功能特性
