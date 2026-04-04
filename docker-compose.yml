@@ -87,13 +87,18 @@ services:
       LOG_LEVEL: info
       # JWT Secret (override in production!)
       JWT_SECRET: ${JWT_SECRET:-cloud-agent-secret-key-2024}
-    ports:
-      - "8080:8080"
+    # backend port is only exposed internally; nginx proxies /api/ to backend:8080
+    # Remove the public port mapping to prevent bypassing nginx
+    # ports:
+    #   - "127.0.0.1:8080:8080"
     depends_on:
       mysql:
         condition: service_healthy
+      # NOTE: rabbitmq dependency uses service_started (not service_healthy) because
+      # RabbitMQ can take 30-60s to become healthy, blocking backend startup.
+      # The backend code already handles RabbitMQ connection failures gracefully.
       rabbitmq:
-        condition: service_healthy
+        condition: service_started
     networks:
       - cloud-agent-net
 
@@ -106,7 +111,7 @@ services:
     container_name: cloud-agent-frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "0.0.0.0:80:80"
     depends_on:
       - backend
     networks:
