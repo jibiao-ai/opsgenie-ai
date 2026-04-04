@@ -81,12 +81,12 @@ services:
       AI_API_KEY: ${AI_API_KEY:-}
       AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
       AI_MODEL: ${AI_MODEL:-gpt-4}
-      # RabbitMQ retry (production: 30 retries)
+      # RabbitMQ connection retry count
       MQ_RETRIES: "30"
-      # Frontend dist path inside container
-      FRONTEND_DIST: /app/frontend/dist
       # Logging
       LOG_LEVEL: info
+      # JWT Secret (override in production!)
+      JWT_SECRET: ${JWT_SECRET:-cloud-agent-secret-key-2024}
     ports:
       - "8080:8080"
     depends_on:
@@ -94,12 +94,10 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    volumes:
-      - ./frontend/dist:/app/frontend/dist:ro
     networks:
       - cloud-agent-net
 
-  # React Frontend (Nginx)
+  # React Frontend (Nginx - serves static files and proxies /api to backend)
   frontend:
     build:
       context: ./frontend
