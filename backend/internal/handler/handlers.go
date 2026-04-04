@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -604,4 +605,268 @@ func (h *Handler) TestAIProvider(c *gin.Context) {
 		}
 	}
 	response.BadRequest(c, errMsg)
+}
+
+// ==================== Cloud Platforms ====================
+
+// ListCloudPlatforms returns all cloud platforms
+func (h *Handler) ListCloudPlatforms(c *gin.Context) {
+	var platforms []model.CloudPlatform
+	if err := repository.DB.Find(&platforms).Error; err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, platforms)
+}
+
+// CreateCloudPlatform creates a new cloud platform entry
+func (h *Handler) CreateCloudPlatform(c *gin.Context) {
+	var req struct {
+		Name            string `json:"name" binding:"required"`
+		Type            string `json:"type" binding:"required"`
+		AuthURL         string `json:"auth_url"`
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		DomainName      string `json:"domain_name"`
+		ProjectName     string `json:"project_name"`
+		ProjectID       string `json:"project_id"`
+		AccessKeyID     string `json:"access_key_id"`
+		AccessKeySecret string `json:"access_key_secret"`
+		Endpoint        string `json:"endpoint"`
+		Description     string `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+	if req.Type != "easystack" && req.Type != "zstack" {
+		response.BadRequest(c, "type must be easystack or zstack")
+		return
+	}
+	platform := model.CloudPlatform{
+		Name:            req.Name,
+		Type:            req.Type,
+		AuthURL:         req.AuthURL,
+		Username:        req.Username,
+		Password:        req.Password,
+		DomainName:      req.DomainName,
+		ProjectName:     req.ProjectName,
+		ProjectID:       req.ProjectID,
+		AccessKeyID:     req.AccessKeyID,
+		AccessKeySecret: req.AccessKeySecret,
+		Endpoint:        req.Endpoint,
+		Description:     req.Description,
+		IsActive:        true,
+		Status:          "unknown",
+		CreatedBy:       c.GetUint("user_id"),
+	}
+	if err := repository.DB.Create(&platform).Error; err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, platform)
+}
+
+// UpdateCloudPlatform updates a cloud platform entry
+func (h *Handler) UpdateCloudPlatform(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	var platform model.CloudPlatform
+	if err := repository.DB.First(&platform, id).Error; err != nil {
+		response.BadRequest(c, "platform not found")
+		return
+	}
+	var req struct {
+		Name            string `json:"name"`
+		Type            string `json:"type"`
+		AuthURL         string `json:"auth_url"`
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		DomainName      string `json:"domain_name"`
+		ProjectName     string `json:"project_name"`
+		ProjectID       string `json:"project_id"`
+		AccessKeyID     string `json:"access_key_id"`
+		AccessKeySecret string `json:"access_key_secret"`
+		Endpoint        string `json:"endpoint"`
+		Description     string `json:"description"`
+		IsActive        *bool  `json:"is_active"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "invalid request")
+		return
+	}
+	if req.Name != "" {
+		platform.Name = req.Name
+	}
+	if req.Type != "" {
+		platform.Type = req.Type
+	}
+	if req.AuthURL != "" {
+		platform.AuthURL = req.AuthURL
+	}
+	if req.Username != "" {
+		platform.Username = req.Username
+	}
+	if req.Password != "" {
+		platform.Password = req.Password
+	}
+	if req.DomainName != "" {
+		platform.DomainName = req.DomainName
+	}
+	if req.ProjectName != "" {
+		platform.ProjectName = req.ProjectName
+	}
+	if req.ProjectID != "" {
+		platform.ProjectID = req.ProjectID
+	}
+	if req.AccessKeyID != "" {
+		platform.AccessKeyID = req.AccessKeyID
+	}
+	if req.AccessKeySecret != "" {
+		platform.AccessKeySecret = req.AccessKeySecret
+	}
+	if req.Endpoint != "" {
+		platform.Endpoint = req.Endpoint
+	}
+	if req.Description != "" {
+		platform.Description = req.Description
+	}
+	if req.IsActive != nil {
+		platform.IsActive = *req.IsActive
+	}
+	if err := repository.DB.Save(&platform).Error; err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, platform)
+}
+
+// DeleteCloudPlatform soft-deletes a cloud platform
+func (h *Handler) DeleteCloudPlatform(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err := repository.DB.Delete(&model.CloudPlatform{}, id).Error; err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, nil)
+}
+
+// TestCloudPlatform tests connectivity to a cloud platform
+func (h *Handler) TestCloudPlatform(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	var platform model.CloudPlatform
+	if err := repository.DB.First(&platform, id).Error; err != nil {
+		response.BadRequest(c, "platform not found")
+		return
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	var testErr error
+
+	switch platform.Type {
+	case "easystack":
+		// EasyStack: call Keystone v3 token endpoint
+		if platform.AuthURL == "" || platform.Username == "" || platform.Password == "" {
+			response.BadRequest(c, "EasyStack 平台缺少 AuthURL、Username 或 Password")
+			return
+		}
+		keystoneURL := strings.TrimRight(platform.AuthURL, "/") + "/v3/auth/tokens"
+		domain := platform.DomainName
+		if domain == "" {
+			domain = "Default"
+		}
+		authPayload := map[string]interface{}{
+			"auth": map[string]interface{}{
+				"identity": map[string]interface{}{
+					"methods": []string{"password"},
+					"password": map[string]interface{}{
+						"user": map[string]interface{}{
+							"name":     platform.Username,
+							"password": platform.Password,
+							"domain":   map[string]string{"name": domain},
+						},
+					},
+				},
+			},
+		}
+		body, _ := json.Marshal(authPayload)
+		req, err := http.NewRequest("POST", keystoneURL, bytes.NewReader(body))
+		if err != nil {
+			testErr = fmt.Errorf("创建请求失败: %v", err)
+			break
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			testErr = fmt.Errorf("连接失败: %v", err)
+			break
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == 201 || resp.StatusCode == 200 {
+			repository.DB.Model(&platform).Update("status", "connected")
+			response.Success(c, gin.H{"status": "connected", "message": "EasyStack Keystone 认证成功"})
+			return
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		testErr = fmt.Errorf("认证失败 (HTTP %d): %s", resp.StatusCode, string(respBody))
+
+	case "zstack":
+		// ZStack: call /zstack/v1/accounts/login
+		if platform.Endpoint == "" {
+			response.BadRequest(c, "ZStack 平台缺少 Endpoint")
+			return
+		}
+		var loginURL string
+		var loginBody []byte
+		if platform.AccessKeyID != "" && platform.AccessKeySecret != "" {
+			loginURL = strings.TrimRight(platform.Endpoint, "/") + "/zstack/v1/accounts/login"
+			loginPayload := map[string]interface{}{
+				"logInByExactAccount": map[string]string{
+					"accountName": platform.AccessKeyID,
+					"password":    platform.AccessKeySecret,
+				},
+			}
+			loginBody, _ = json.Marshal(loginPayload)
+		} else if platform.Username != "" && platform.Password != "" {
+			loginURL = strings.TrimRight(platform.Endpoint, "/") + "/zstack/v1/accounts/login"
+			loginPayload := map[string]interface{}{
+				"logInByExactAccount": map[string]string{
+					"accountName": platform.Username,
+					"password":    platform.Password,
+				},
+			}
+			loginBody, _ = json.Marshal(loginPayload)
+		} else {
+			response.BadRequest(c, "ZStack 平台缺少认证信息(AccessKey 或 Username/Password)")
+			return
+		}
+		req, err := http.NewRequest("PUT", loginURL, bytes.NewReader(loginBody))
+		if err != nil {
+			testErr = fmt.Errorf("创建请求失败: %v", err)
+			break
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			testErr = fmt.Errorf("连接失败: %v", err)
+			break
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == 200 || resp.StatusCode == 201 {
+			repository.DB.Model(&platform).Update("status", "connected")
+			response.Success(c, gin.H{"status": "connected", "message": "ZStack 登录认证成功"})
+			return
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		testErr = fmt.Errorf("认证失败 (HTTP %d): %s", resp.StatusCode, string(respBody))
+
+	default:
+		response.BadRequest(c, "不支持的平台类型: "+platform.Type)
+		return
+	}
+
+	if testErr != nil {
+		repository.DB.Model(&platform).Update("status", "failed")
+		logger.Log.Warnf("Cloud platform test failed for %s(%s): %v", platform.Name, platform.Type, testErr)
+		response.BadRequest(c, testErr.Error())
+	}
 }

@@ -135,6 +135,13 @@ func main() {
 			auth.PUT("/ai-providers/:id", h.UpdateAIProvider)
 			auth.POST("/ai-providers/:id/test", h.TestAIProvider)
 
+			// Cloud Platforms
+			auth.GET("/cloud-platforms", h.ListCloudPlatforms)
+			auth.POST("/cloud-platforms", h.CreateCloudPlatform)
+			auth.PUT("/cloud-platforms/:id", h.UpdateCloudPlatform)
+			auth.DELETE("/cloud-platforms/:id", h.DeleteCloudPlatform)
+			auth.POST("/cloud-platforms/:id/test", h.TestCloudPlatform)
+
 			// Admin routes
 			admin := auth.Group("")
 			admin.Use(middleware.AdminMiddleware())
