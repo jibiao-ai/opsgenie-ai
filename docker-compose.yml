@@ -87,6 +87,16 @@ services:
       LOG_LEVEL: info
       # JWT Secret (override in production!)
       JWT_SECRET: ${JWT_SECRET:-cloud-agent-secret-key-2024}
+    volumes:
+      # Mount host /etc/hosts so the backend container can resolve
+      # domain names used by cloud platforms (EasyStack/ZStack) that
+      # rely on the host's local DNS entries.
+      - /etc/hosts:/etc/hosts:ro
+    # Uncomment extra_hosts below to add custom DNS entries directly
+    # without relying on the host's /etc/hosts file.
+    # extra_hosts:
+    #   - "keystone.example.com:10.0.0.100"
+    #   - "zstack.example.com:10.0.0.200"
     # backend port is only exposed internally; nginx proxies /api/ to backend:8080
     # Remove the public port mapping to prevent bypassing nginx
     # ports:

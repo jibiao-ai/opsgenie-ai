@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Bot, Plus, Edit2, Trash2, CheckCircle, XCircle, X, Loader2 } from 'lucide-react';
-import { getAgents, createAgent, updateAgent, deleteAgent } from '../services/api';
+import { getAgents, createAgent, updateAgent, deleteAgent, getAIProviders } from '../services/api';
 import toast from 'react-hot-toast';
 
 export default function AgentsPage() {
@@ -9,11 +9,39 @@ export default function AgentsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editAgent, setEditAgent] = useState(null);
   const [form, setForm] = useState({
-    name: '', description: '', system_prompt: '', model: 'gpt-4',
+    name: '', description: '', system_prompt: '', model: '',
     temperature: 0.7, max_tokens: 4096, is_active: true,
   });
+  const [availableModels, setAvailableModels] = useState([]);
 
-  useEffect(() => { loadAgents(); }, []);
+  useEffect(() => { loadAgents(); loadModels(); }, []);
+
+  const loadModels = async () => {
+    try {
+      const res = await getAIProviders();
+      if (res.code === 0 && res.data) {
+        // Only show enabled & configured providers
+        const models = res.data
+          .filter((p) => p.is_enabled && p.configured)
+          .map((p) => ({
+            name: p.name,
+            label: p.label,
+            model: p.model,
+            is_default: p.is_default,
+          }));
+        setAvailableModels(models);
+        // Set default model for the form if not already set
+        if (!form.model) {
+          const defaultModel = models.find((m) => m.is_default) || models[0];
+          if (defaultModel) {
+            setForm((prev) => ({ ...prev, model: defaultModel.model }));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load AI models:', err);
+    }
+  };
 
   const loadAgents = async () => {
     try {
@@ -61,7 +89,8 @@ export default function AgentsPage() {
   const resetForm = () => {
     setShowForm(false);
     setEditAgent(null);
-    setForm({ name: '', description: '', system_prompt: '', model: 'gpt-4', temperature: 0.7, max_tokens: 4096, is_active: true });
+    const defaultModel = availableModels.find((m) => m.is_default) || availableModels[0];
+    setForm({ name: '', description: '', system_prompt: '', model: defaultModel?.model || '', temperature: 0.7, max_tokens: 4096, is_active: true });
   };
 
   return (
@@ -102,14 +131,20 @@ export default function AgentsPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-600 mb-1.5">模型</label>
-                    <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#513CC8] outline-none bg-white">
-                      <option value="gpt-4">GPT-4</option>
-                      <option value="gpt-4o">GPT-4o</option>
-                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                      <option value="deepseek-chat">DeepSeek Chat</option>
-                      <option value="qwen-plus">Qwen Plus</option>
-                    </select>
+                    {availableModels.length > 0 ? (
+                      <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#513CC8] outline-none bg-white">
+                        {availableModels.map((m) => (
+                          <option key={m.name} value={m.model}>
+                            {m.label} ({m.model}){m.is_default ? ' ★ 默认' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="w-full px-3 py-2 border border-orange-200 bg-orange-50 rounded-lg text-sm text-orange-600">
+                        暂无已配置的模型，请先前往「模型配置」页面添加
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>

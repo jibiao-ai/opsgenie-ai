@@ -28,12 +28,41 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./cmd/serv
 # Runtime stage
 FROM alpine:3.19
 
-RUN apk --no-cache add ca-certificates tzdata
+# Install runtime dependencies:
+#   ca-certificates  - TLS/SSL connections to cloud platform APIs
+#   tzdata           - timezone support (Asia/Shanghai)
+#   bind-tools       - DNS diagnostic tools (dig, nslookup, host)
+#                      for debugging domain-based cloud platform access
+#   curl             - HTTP diagnostic tool for API connectivity testing
+RUN apk --no-cache add ca-certificates tzdata bind-tools curl
+
 ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 
 COPY --from=builder /app/server .
+
+# ========================
+# /etc/hosts Mount for Domain-based Cloud Platform Access
+# ========================
+# When connecting to cloud platforms (EasyStack/ZStack) that use domain
+# names resolved via the host's /etc/hosts (private infrastructure
+# without public DNS), the host's /etc/hosts file must be mounted into
+# this container as a read-only volume.
+#
+# This is configured in docker-compose.yml:
+#   volumes:
+#     - /etc/hosts:/etc/hosts:ro
+#
+# Alternatively, use extra_hosts in docker-compose.yml:
+#   extra_hosts:
+#     - "keystone.easystack.local:10.0.0.100"
+#     - "zstack.internal.corp:10.0.0.200"
+#
+# To verify DNS resolution inside the container:
+#   docker exec cloud-agent-backend nslookup keystone.easystack.local
+#   docker exec cloud-agent-backend cat /etc/hosts
+# ========================
 
 EXPOSE 8080
 

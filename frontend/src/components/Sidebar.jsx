@@ -71,22 +71,18 @@ export default function Sidebar() {
 
   return (
     <div
-      className={`flex flex-col transition-all duration-300 flex-shrink-0 ${
+      className={`flex flex-col transition-all duration-300 flex-shrink-0 border-r border-gray-200 ${
         sidebarCollapsed ? 'w-16' : 'w-56'
       }`}
-      style={{ background: '#513CC8' }}
+      style={{ background: '#ffffff' }}
     >
       {/* Logo 区域 */}
       <div
-        className="flex items-center h-16 px-3 flex-shrink-0 border-b"
-        style={{ borderColor: 'rgba(255,255,255,0.15)' }}
+        className="flex items-center h-16 px-3 flex-shrink-0 border-b border-gray-200"
       >
         <button
           onClick={toggleSidebar}
-          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors flex-shrink-0"
-          style={{ color: '#d4d0f0' }}
-          onMouseEnter={e => e.currentTarget.style.background = '#4230A6'}
-          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors flex-shrink-0 text-gray-500 hover:text-[#513CC8] hover:bg-[#EEE9FB]"
           title="折叠/展开菜单"
         >
           <Menu className="w-5 h-5" />
@@ -95,13 +91,12 @@ export default function Sidebar() {
           <div className="ml-2 flex items-center gap-2 overflow-hidden">
             <div
               className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold text-white"
-              style={{ background: 'rgba(255,255,255,0.2)' }}
+              style={{ background: '#513CC8' }}
             >
               AI
             </div>
             <span
-              className="text-sm font-semibold whitespace-nowrap"
-              style={{ color: '#ffffff' }}
+              className="text-sm font-semibold whitespace-nowrap text-gray-800"
             >
               AIOPS运维平台
             </span>
@@ -116,17 +111,14 @@ export default function Sidebar() {
             {/* 分组标题 */}
             {!sidebarCollapsed && (
               <div
-                className="px-4 pt-4 pb-1 text-xs uppercase tracking-widest font-medium"
-                style={{ color: '#7c76a8', letterSpacing: '0.1em' }}
+                className="px-4 pt-4 pb-1 text-xs uppercase tracking-widest font-medium text-gray-400"
+                style={{ letterSpacing: '0.1em' }}
               >
                 {group.label}
               </div>
             )}
             {sidebarCollapsed && groupIdx > 0 && (
-              <div
-                className="mx-3 my-2 border-t"
-                style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-              />
+              <div className="mx-3 my-2 border-t border-gray-100" />
             )}
 
             {/* 菜单项 */}
@@ -143,48 +135,27 @@ export default function Sidebar() {
                   title={sidebarCollapsed ? item.label : (isDisabled ? '暂无页面' : undefined)}
                   className={`w-full flex items-center h-9 text-sm transition-all duration-150 relative ${
                     sidebarCollapsed ? 'justify-center px-0' : 'px-4'
-                  } ${isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-                  style={
+                  } ${isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${
                     isActive
-                      ? {
-                          background: '#513CC8',
-                          color: '#ffffff',
-                        }
-                      : {
-                          color: '#c4bfe8',
-                        }
-                  }
-                  onMouseEnter={e => {
-                    if (!isActive && !isDisabled) {
-                      e.currentTarget.style.background = '#2d2857';
-                      e.currentTarget.style.color = '#ffffff';
-                    }
-                  }}
-                  onMouseLeave={e => {
-                    if (!isActive && !isDisabled) {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = '#c4bfe8';
-                    }
-                  }}
+                      ? 'bg-[#EEE9FB] text-[#513CC8] font-medium'
+                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
                 >
                   {/* 激活左边框指示 */}
                   {isActive && !sidebarCollapsed && (
                     <span
                       className="absolute left-0 top-0 bottom-0 w-0.5 rounded-r"
-                      style={{ background: '#ffffff' }}
+                      style={{ background: '#513CC8' }}
                     />
                   )}
-                  <Icon
-                    className="w-4 h-4 flex-shrink-0"
-                    style={{ marginLeft: sidebarCollapsed ? 0 : undefined }}
-                  />
+                  <Icon className="w-4 h-4 flex-shrink-0" />
                   {!sidebarCollapsed && (
                     <span className="ml-2.5 whitespace-nowrap text-sm">{item.label}</span>
                   )}
                   {!sidebarCollapsed && isDisabled && (
                     <span
-                      className="ml-auto text-xs px-1.5 py-0.5 rounded"
-                      style={{ background: 'rgba(124,118,168,0.3)', color: '#7c76a8', fontSize: '10px' }}
+                      className="ml-auto text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-400"
+                      style={{ fontSize: '10px' }}
                     >
                       即将上线
                     </span>
@@ -197,18 +168,12 @@ export default function Sidebar() {
       </nav>
 
       {/* 底部用户区 */}
-      <div
-        className="flex-shrink-0 border-t p-3"
-        style={{ borderColor: 'rgba(255,255,255,0.15)' }}
-      >
+      <div className="flex-shrink-0 border-t border-gray-200 p-3">
         {sidebarCollapsed ? (
           <button
             onClick={handleLogout}
-            className="w-full flex items-center justify-center h-9 rounded-lg transition-colors"
-            style={{ color: '#c4bfe8' }}
+            className="w-full flex items-center justify-center h-9 rounded-lg transition-colors text-gray-400 hover:bg-red-50 hover:text-red-500"
             title="退出登录"
-            onMouseEnter={e => { e.currentTarget.style.background = '#3d1f1f'; e.currentTarget.style.color = '#f87171'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#c4bfe8'; }}
           >
             <LogOut className="w-4 h-4" />
           </button>
@@ -217,19 +182,19 @@ export default function Sidebar() {
             {/* 用户头像 */}
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold text-white"
-              style={{ background: 'rgba(255,255,255,0.2)' }}
+              style={{ background: '#513CC8' }}
             >
               {(user?.username || 'U').slice(0, 1).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate" style={{ color: '#e8e3f8' }}>
+              <p className="text-sm font-medium truncate text-gray-700">
                 {user?.username || 'admin'}
               </p>
               <span
                 className="text-xs px-1.5 py-0.5 rounded"
                 style={{
-                  background: user?.role === 'admin' ? 'rgba(81,60,200,0.3)' : 'rgba(124,118,168,0.2)',
-                  color: user?.role === 'admin' ? '#a78bfa' : '#7c76a8',
+                  background: user?.role === 'admin' ? '#EEE9FB' : '#f3f4f6',
+                  color: user?.role === 'admin' ? '#513CC8' : '#6b7280',
                   fontSize: '10px',
                 }}
               >
@@ -238,11 +203,8 @@ export default function Sidebar() {
             </div>
             <button
               onClick={handleLogout}
-              className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-              style={{ color: '#7c76a8' }}
+              className="p-1.5 rounded-lg transition-colors flex-shrink-0 text-gray-400 hover:bg-red-50 hover:text-red-500"
               title="退出登录"
-              onMouseEnter={e => { e.currentTarget.style.background = '#3d1f1f'; e.currentTarget.style.color = '#f87171'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#7c76a8'; }}
             >
               <LogOut className="w-4 h-4" />
             </button>

@@ -2,10 +2,14 @@ package handler
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -188,14 +192,30 @@ func (h *Handler) SendMessage(c *gin.Context) {
 	userID := c.GetUint("user_id")
 
 	var req struct {
-		Content string `json:"content" binding:"required"`
+		Content     string   `json:"content" binding:"required"`
+		Attachments []string `json:"attachments"` // file paths from upload
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "content is required")
 		return
 	}
 
-	userMsg, assistantMsg, err := h.chatService.SendMessage(uint(convID), userID, req.Content, nil)
+	// Build the full message content including attachment info
+	fullContent := req.Content
+	if len(req.Attachments) > 0 {
+		fullContent += "\n\n[附件信息]\n"
+		for _, att := range req.Attachments {
+			// Read file content for text-based files
+			content, err := readAttachmentContent(att)
+			if err == nil && content != "" {
+				fullContent += fmt.Sprintf("文件: %s\n内容:\n%s\n---\n", filepath.Base(att), content)
+			} else {
+				fullContent += fmt.Sprintf("文件: %s (二进制文件，无法读取内容)\n", filepath.Base(att))
+			}
+		}
+	}
+
+	userMsg, assistantMsg, err := h.chatService.SendMessage(uint(convID), userID, fullContent, nil)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return
@@ -205,6 +225,80 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		"user_message":      userMsg,
 		"assistant_message": assistantMsg,
 	})
+}
+
+// ==================== File Upload ====================
+
+// UploadFile handles file uploads for chat attachments
+func (h *Handler) UploadFile(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		response.BadRequest(c, "请选择要上传的文件")
+		return
+	}
+
+	// Validate file size (max 10MB)
+	if file.Size > 10*1024*1024 {
+		response.BadRequest(c, "文件大小不能超过 10MB")
+		return
+	}
+
+	// Create uploads directory if not exists
+	uploadDir := "uploads"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		response.InternalError(c, "创建上传目录失败")
+		return
+	}
+
+	// Generate unique filename
+	ext := filepath.Ext(file.Filename)
+	randBytes := make([]byte, 16)
+	rand.Read(randBytes)
+	newFilename := hex.EncodeToString(randBytes) + ext
+	filePath := filepath.Join(uploadDir, newFilename)
+
+	// Save file
+	if err := c.SaveUploadedFile(file, filePath); err != nil {
+		response.InternalError(c, "保存文件失败")
+		return
+	}
+
+	logger.Log.Infof("File uploaded: %s -> %s (%d bytes)", file.Filename, filePath, file.Size)
+
+	response.Success(c, gin.H{
+		"filename":      file.Filename,
+		"filepath":      filePath,
+		"size":          file.Size,
+		"content_type":  file.Header.Get("Content-Type"),
+	})
+}
+
+// readAttachmentContent reads the content of a text-based attachment file
+func readAttachmentContent(filePath string) (string, error) {
+	// Only read text-based files
+	ext := strings.ToLower(filepath.Ext(filePath))
+	textExts := map[string]bool{
+		".txt": true, ".md": true, ".csv": true, ".json": true,
+		".yaml": true, ".yml": true, ".xml": true, ".log": true,
+		".conf": true, ".cfg": true, ".ini": true, ".sh": true,
+		".py": true, ".go": true, ".js": true, ".ts": true,
+		".html": true, ".css": true, ".sql": true, ".env": true,
+	}
+	if !textExts[ext] {
+		return "", fmt.Errorf("not a text file")
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	content := string(data)
+	// Truncate very large files
+	if len(content) > 8000 {
+		content = content[:8000] + "\n... (文件内容过长，已截断)"
+	}
+	return content, nil
 }
 
 // ==================== WebSocket Chat ====================
@@ -572,17 +666,21 @@ func (h *Handler) TestAIProvider(c *gin.Context) {
 	}
 
 	// Build the test request payload (OpenAI-compatible chat completion)
+	// NOTE: Use a minimal, widely-compatible payload.
+	// - Use max_tokens = 10 (some providers reject very small values).
+	// - Do NOT include "tools", "functions", or "stream" — many providers
+	//   (e.g. SiliconFlow) return 403/400 for unsupported parameters.
 	payload := map[string]interface{}{
 		"model": modelName,
 		"messages": []map[string]string{
 			{"role": "user", "content": "Hi"},
 		},
-		"max_tokens": 5,
+		"max_tokens": 10,
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Determine the chat completions endpoint
-	endpoint := fmt.Sprintf("%s/chat/completions", baseURL)
+	endpoint := fmt.Sprintf("%s/chat/completions", strings.TrimRight(baseURL, "/"))
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(payloadBytes))

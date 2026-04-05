@@ -55,8 +55,18 @@ export const deleteConversation = (id) => api.delete(`/conversations/${id}`);
 // Messages
 export const getMessages = (conversationId) =>
   api.get(`/conversations/${conversationId}/messages`);
-export const sendMessage = (conversationId, content) =>
-  api.post(`/conversations/${conversationId}/messages`, { content });
+export const sendMessage = (conversationId, content, attachments = []) =>
+  api.post(`/conversations/${conversationId}/messages`, { content, attachments });
+
+// File Upload
+export const uploadFile = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+};
 
 // Skills
 export const getSkills = () => api.get('/skills');

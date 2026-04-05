@@ -220,6 +220,14 @@ func (s *ChatService) GetDashboardStats(userID uint) (map[string]interface{}, er
 	var taskCount int64
 	repository.DB.Model(&model.TaskLog{}).Where("user_id = ?", userID).Count(&taskCount)
 
+	// Cloud platform count
+	var cloudPlatformCount int64
+	repository.DB.Model(&model.CloudPlatform{}).Count(&cloudPlatformCount)
+
+	// AI model (provider) count — only those with a configured API key
+	var aiModelCount int64
+	repository.DB.Model(&model.AIProvider{}).Where("api_key != '' AND is_enabled = ?", true).Count(&aiModelCount)
+
 	var recentTasks []model.TaskLog
 	repository.DB.Where("user_id = ?", userID).Order("created_at DESC").Limit(5).Find(&recentTasks)
 
@@ -231,14 +239,25 @@ func (s *ChatService) GetDashboardStats(userID uint) (map[string]interface{}, er
 		Limit(5).
 		Find(&recentMsgs)
 
+	// Recent conversations (for dashboard display)
+	var recentConversations []model.Conversation
+	repository.DB.Where("user_id = ?", userID).
+		Preload("Agent").
+		Order("updated_at DESC").
+		Limit(6).
+		Find(&recentConversations)
+
 	return map[string]interface{}{
-		"conversations": conversationCount,
-		"messages":      messageCount,
-		"agents":        agentCount,
-		"skills":        skillCount,
-		"tasks":         taskCount,
-		"recent_tasks":  recentTasks,
-		"recent_msgs":   recentMsgs,
+		"conversations":        conversationCount,
+		"messages":             messageCount,
+		"agents":               agentCount,
+		"skills":               skillCount,
+		"tasks":                taskCount,
+		"cloud_platforms":      cloudPlatformCount,
+		"ai_models":           aiModelCount,
+		"recent_tasks":         recentTasks,
+		"recent_msgs":          recentMsgs,
+		"recent_conversations": recentConversations,
 	}, nil
 }
 

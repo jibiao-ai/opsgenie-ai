@@ -310,8 +310,8 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 	messages = append(messages, history...)
 	messages = append(messages, ChatMessage{Role: "user", Content: userMsg})
 
-	// Resolve model name: agent-specific > database provider > static config
-	_, _, dbModelName := a.getActiveAIConfig()
+	// Resolve AI config: agent-specific > database provider > static config
+	baseURL, _, dbModelName := a.getActiveAIConfig()
 	modelName := dbModelName
 	if modelName == "" {
 		modelName = a.aiCfg.Model
@@ -320,15 +320,41 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 		modelName = agentModel.Model
 	}
 
+	logger.Log.Infof("Chat request: provider_url=%s, model=%s", baseURL, modelName)
+
+	// Decide whether to include tools and stream in the request.
+	// Providers like SiliconFlow return 403/400 when unsupported parameters
+	// (e.g. "tools", "stream") are sent.
+	supportsTools := a.providerSupportsTools(baseURL)
+	supportsStream := a.providerSupportsStream(baseURL)
+	isSiliconFlow := a.isSiliconFlowProvider(baseURL)
+
 	// Loop for tool calling
 	for iterations := 0; iterations < 10; iterations++ {
 		reqBody := map[string]interface{}{
 			"model":       modelName,
 			"messages":    messages,
-			"tools":       a.tools,
-			"temperature": agentModel.Temperature,
-			"max_tokens":  agentModel.MaxTokens,
-			"stream":      callback != nil,
+		}
+		// Only include temperature/max_tokens if they have meaningful values
+		if agentModel.Temperature > 0 {
+			reqBody["temperature"] = agentModel.Temperature
+		}
+		if agentModel.MaxTokens > 0 {
+			// SiliconFlow uses "max_tokens" but is strict about values;
+			// cap it to avoid API errors
+			if isSiliconFlow {
+				reqBody["max_tokens"] = agentModel.MaxTokens
+			} else {
+				reqBody["max_tokens"] = agentModel.MaxTokens
+			}
+		}
+		// Only send stream parameter for providers that support it
+		if supportsStream {
+			reqBody["stream"] = callback != nil
+		}
+		// Only attach tools when the provider is known to support them
+		if supportsTools && len(a.tools) > 0 {
+			reqBody["tools"] = a.tools
 		}
 
 		respBody, err := a.callAI(reqBody)
@@ -421,11 +447,59 @@ func (a *Agent) getActiveAIConfig() (baseURL string, apiKey string, modelName st
 	return a.aiCfg.BaseURL, a.aiCfg.APIKey, a.aiCfg.Model
 }
 
+// isSiliconFlowProvider checks if the provider URL belongs to SiliconFlow.
+func (a *Agent) isSiliconFlowProvider(baseURL string) bool {
+	lower := strings.ToLower(baseURL)
+	return strings.Contains(lower, "siliconflow")
+}
+
+// providerSupportsTools returns true if the AI provider is known to support
+// OpenAI-compatible function calling (tools parameter).
+func (a *Agent) providerSupportsTools(baseURL string) bool {
+	lower := strings.ToLower(baseURL)
+	// Providers known to SUPPORT tools — whitelist approach
+	supportedPatterns := []string{
+		"api.openai.com",
+		"api.deepseek.com",
+		"api.anthropic.com",
+		"generativelanguage.googleapis.com", // Gemini
+	}
+	for _, pattern := range supportedPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	// All other providers: do NOT send tools to avoid 403/400
+	return false
+}
+
+// providerSupportsStream returns true if the provider supports the "stream" parameter.
+// SiliconFlow and some other providers reject the stream field entirely.
+func (a *Agent) providerSupportsStream(baseURL string) bool {
+	lower := strings.ToLower(baseURL)
+	// Providers known NOT to handle stream well
+	noStreamPatterns := []string{
+		"siliconflow",
+		"api.minimax.chat",
+		"aip.baidubce.com",
+		"hunyuan",
+		"baichuan",
+	}
+	for _, pattern := range noStreamPatterns {
+		if strings.Contains(lower, pattern) {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *Agent) callAI(reqBody interface{}) ([]byte, error) {
 	baseURL, apiKey, _ := a.getActiveAIConfig()
 
 	body, _ := json.Marshal(reqBody)
 	url := fmt.Sprintf("%s/chat/completions", strings.TrimRight(baseURL, "/"))
+
+	logger.Log.Infof("callAI: url=%s, body_size=%d", url, len(body))
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
@@ -437,7 +511,8 @@ func (a *Agent) callAI(reqBody interface{}) ([]byte, error) {
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		logger.Log.Errorf("callAI network error: %v", err)
+		return nil, fmt.Errorf("AI API 网络请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -447,7 +522,20 @@ func (a *Agent) callAI(reqBody interface{}) ([]byte, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("AI API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+		logger.Log.Errorf("callAI error: HTTP %d, url=%s, response=%s", resp.StatusCode, url, string(respBody))
+		// Provide user-friendly error messages for common HTTP status codes
+		switch resp.StatusCode {
+		case 401:
+			return nil, fmt.Errorf("AI 服务认证失败(HTTP 401)，请检查 API Key 是否正确")
+		case 403:
+			return nil, fmt.Errorf("AI 服务拒绝访问(HTTP 403)，请检查 API Key 权限或模型名称是否正确: %s", string(respBody))
+		case 404:
+			return nil, fmt.Errorf("AI 服务接口未找到(HTTP 404)，请检查 Base URL 和模型名称是否正确")
+		case 429:
+			return nil, fmt.Errorf("AI 服务请求频率超限(HTTP 429)，请稍后重试")
+		default:
+			return nil, fmt.Errorf("AI API 错误 (HTTP %d): %s", resp.StatusCode, string(respBody))
+		}
 	}
 
 	return respBody, nil

@@ -10,6 +10,8 @@ import {
   ChevronDown,
   Loader2,
   MessageSquare,
+  X,
+  CheckCircle2,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import {
@@ -19,6 +21,7 @@ import {
   deleteConversation,
   getMessages,
   sendMessage,
+  uploadFile,
 } from '../services/api';
 import toast from 'react-hot-toast';
 
@@ -33,9 +36,11 @@ export default function ChatPage() {
   } = useStore();
 
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState([]); // { file, name, size, uploading, uploaded, filepath, error }
   const [showAgentDropdown, setShowAgentDropdown] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Load agents and conversations on mount
   useEffect(() => {
@@ -123,7 +128,16 @@ export default function ChatPage() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isSending) return;
+    if ((!input.trim() && attachments.length === 0) || isSending) return;
+    // Wait for any uploading files
+    if (attachments.some((a) => a.uploading)) {
+      toast.error('请等待文件上传完成');
+      return;
+    }
+    if (attachments.some((a) => a.error)) {
+      toast.error('部分文件上传失败，请删除后重试');
+      return;
+    }
 
     let convId = currentConversation?.id;
 
@@ -150,44 +164,131 @@ export default function ChatPage() {
     }
 
     const userContent = input.trim();
+    const uploadedPaths = attachments.filter((a) => a.uploaded).map((a) => a.filepath);
+    const attachmentNames = attachments.filter((a) => a.uploaded).map((a) => a.name);
     setInput('');
+    setAttachments([]);
     setIsSending(true);
+
+    // Build display content for user message
+    let displayContent = userContent;
+    if (attachmentNames.length > 0) {
+      displayContent += '\n📎 附件: ' + attachmentNames.join(', ');
+    }
 
     // Optimistic update - add user message immediately
     const tempUserMsg = {
       id: Date.now(),
       role: 'user',
-      content: userContent,
+      content: displayContent,
       created_at: new Date().toISOString(),
     };
     addMessage(tempUserMsg);
 
     try {
-      const res = await sendMessage(convId, userContent);
-      if (res.code === 0) {
+      const res = await sendMessage(convId, userContent || '请分析附件内容', uploadedPaths);
+      if (res.code === 0 && res.data) {
         // Replace temp message with real one and add assistant response
+        const userMessage = res.data.user_message;
+        const assistantMessage = res.data.assistant_message;
         setMessages((prev) => {
-          const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
-          return [...filtered, res.data.user_message, res.data.assistant_message];
+          const filtered = Array.isArray(prev) ? prev.filter((m) => m.id !== tempUserMsg.id) : [];
+          const result = [...filtered];
+          if (userMessage) result.push(userMessage);
+          if (assistantMessage) result.push(assistantMessage);
+          return result;
         });
         // Refresh conversation list to update titles
         loadConversations();
       } else {
-        toast.error(res.message || '发送失败');
+        toast.error(res?.message || '发送失败');
       }
     } catch (err) {
-      toast.error('发送消息失败，请重试');
+      console.error('Send message error:', err);
+      const errMsg = err?.message || err?.data?.message || '发送消息失败，请重试';
+      toast.error(errMsg);
       // Add error message
       addMessage({
         id: Date.now() + 1,
         role: 'assistant',
-        content: '抱歉，处理请求时出现错误。请检查网络连接后重试。',
+        content: '抱歉，处理请求时出现错误。请检查网络连接后重试。\n\n错误详情: ' + errMsg,
         created_at: new Date().toISOString(),
       });
     } finally {
       setIsSending(false);
       inputRef.current?.focus();
     }
+  };
+
+  // Handle file selection
+  const handleFileSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`文件 ${file.name} 超过 10MB 限制`);
+        continue;
+      }
+
+      const attachmentId = Date.now() + Math.random();
+      const newAttachment = {
+        id: attachmentId,
+        file,
+        name: file.name,
+        size: file.size,
+        uploading: true,
+        uploaded: false,
+        filepath: '',
+        error: null,
+      };
+
+      setAttachments((prev) => [...prev, newAttachment]);
+
+      // Upload file
+      try {
+        const res = await uploadFile(file);
+        if (res.code === 0) {
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.id === attachmentId
+                ? { ...a, uploading: false, uploaded: true, filepath: res.data.filepath }
+                : a
+            )
+          );
+        } else {
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.id === attachmentId
+                ? { ...a, uploading: false, error: res.message || '上传失败' }
+                : a
+            )
+          );
+          toast.error(`文件 ${file.name} 上传失败`);
+        }
+      } catch (err) {
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.id === attachmentId
+              ? { ...a, uploading: false, error: '上传失败' }
+              : a
+          )
+        );
+        toast.error(`文件 ${file.name} 上传失败`);
+      }
+    }
+    // Reset file input
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = (id) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const handleKeyDown = (e) => {
@@ -407,11 +508,61 @@ export default function ChatPage() {
             )}
           </div>
 
+          {/* 附件预览区 */}
+          {attachments.length > 0 && (
+            <div className="border-t border-gray-100 px-4 py-2">
+              <div className="max-w-4xl mx-auto flex flex-wrap gap-2">
+                {attachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs border ${
+                      att.error
+                        ? 'bg-red-50 border-red-200 text-red-600'
+                        : att.uploading
+                        ? 'bg-yellow-50 border-yellow-200 text-yellow-700'
+                        : 'bg-[#EEE9FB] border-[#c4b5fd] text-[#513CC8]'
+                    }`}
+                  >
+                    <Paperclip className="w-3 h-3" />
+                    <span className="max-w-[150px] truncate">{att.name}</span>
+                    <span className="text-gray-400">({formatFileSize(att.size)})</span>
+                    {att.uploading && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {att.error && <span className="text-red-500">✕</span>}
+                    {att.uploaded && <CheckCircle2 className="w-3 h-3 text-green-500" />}
+                    <button
+                      onClick={() => removeAttachment(att.id)}
+                      className="ml-1 p-0.5 hover:bg-white/50 rounded"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 输入区 */}
           <div className="border-t border-gray-100 p-4">
             <div className="max-w-4xl mx-auto flex items-end gap-3">
-              <button className="p-2 text-gray-400 hover:text-[#513CC8] hover:bg-[#EEE9FB] rounded-lg transition-colors">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFileSelect}
+                accept=".txt,.md,.csv,.json,.yaml,.yml,.xml,.log,.conf,.cfg,.ini,.sh,.py,.go,.js,.ts,.html,.css,.sql,.env,.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 text-gray-400 hover:text-[#513CC8] hover:bg-[#EEE9FB] rounded-lg transition-colors relative"
+                title="上传附件 (最大 10MB)"
+              >
                 <Paperclip className="w-5 h-5" />
+                {attachments.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#513CC8] text-white text-[10px] rounded-full flex items-center justify-center">
+                    {attachments.length}
+                  </span>
+                )}
               </button>
               <div className="flex-1 relative">
                 <textarea
@@ -431,7 +582,7 @@ export default function ChatPage() {
               </div>
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || isSending}
+                disabled={(!input.trim() && attachments.length === 0) || isSending}
                 className="px-5 py-2.5 bg-[#513CC8] hover:bg-[#4230A6] text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 {isSending ? (

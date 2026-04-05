@@ -35,7 +35,10 @@ echo ""
 echo "=========================================="
 echo " 部署完成！"
 echo " 访问地址: http://$(curl -s ifconfig.me 2>/dev/null || echo '<公网IP>')"
-echo " 默认账号: admin / admin123"
+echo " 默认账号: admin / Admin@2024!"
+echo ""
+echo " 注意: 如果云平台使用域名接入，请确保宿主机 /etc/hosts"
+echo "       包含对应的域名解析记录（已自动挂载到 backend 容器）"
 echo "=========================================="
 
 # 检查后端健康
@@ -43,7 +46,7 @@ echo ""
 echo "后端健康检查:"
 curl -s http://localhost:8080/api/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}' | python3 -m json.tool 2>/dev/null || \
+  -d '{"username":"admin","password":"Admin@2024!"}' | python3 -m json.tool 2>/dev/null || \
   curl -s http://localhost:8080/api/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
+  -d '{"username":"admin","password":"Admin@2024!"}'

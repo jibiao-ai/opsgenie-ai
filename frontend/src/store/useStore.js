@@ -20,7 +20,7 @@ const useStore = create((set, get) => ({
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
   // Active page
-  activePage: 'chat',
+  activePage: 'dashboard',
   setActivePage: (page) => set({ activePage: page }),
 
   // Theme: light / dark / blue
@@ -52,7 +52,14 @@ const useStore = create((set, get) => ({
 
   // Messages
   messages: [],
-  setMessages: (messages) => set({ messages }),
+  setMessages: (messagesOrFn) => {
+    if (typeof messagesOrFn === 'function') {
+      // Support functional updater: setMessages(prev => newMessages)
+      set((s) => ({ messages: messagesOrFn(s.messages) }));
+    } else {
+      set({ messages: messagesOrFn });
+    }
+  },
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
 
   // Loading states

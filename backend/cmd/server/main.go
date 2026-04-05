@@ -113,6 +113,9 @@ func main() {
 			auth.GET("/conversations/:id/messages", h.GetMessages)
 			auth.POST("/conversations/:id/messages", h.SendMessage)
 
+			// File Upload
+			auth.POST("/upload", h.UploadFile)
+
 			// WebSocket
 			auth.GET("/ws", h.WebSocketChat)
 
