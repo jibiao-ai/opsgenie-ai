@@ -138,6 +138,9 @@ func main() {
 			auth.PUT("/ai-providers/:id", h.UpdateAIProvider)
 			auth.POST("/ai-providers/:id/test", h.TestAIProvider)
 
+			// Resource Monitor (big-screen)
+			auth.GET("/resource-monitor", h.GetResourceMonitor)
+
 			// Cloud Platforms
 			auth.GET("/cloud-platforms", h.ListCloudPlatforms)
 			auth.POST("/cloud-platforms", h.CreateCloudPlatform)

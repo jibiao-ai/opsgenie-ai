@@ -215,7 +215,7 @@ export default function LoginPage() {
               </div>
             </div>
             <p className="text-center text-xs text-gray-300 mt-4">
-              Powered by AIOPS Platform v2.0
+              Powered by AIOPS Platform v2.1.0
             </p>
           </div>
         </div>

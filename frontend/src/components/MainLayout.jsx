@@ -9,6 +9,7 @@ import ScheduledTasksPage from '../pages/ScheduledTasksPage';
 import UsersPage from '../pages/UsersPage';
 import AIModelsPage from '../pages/AIModelsPage';
 import CloudPlatformPage from '../pages/CloudPlatformPage';
+import ResourceMonitorPage from '../pages/ResourceMonitorPage';
 import useStore from '../store/useStore';
 import { Bell, User } from 'lucide-react';
 
@@ -22,6 +23,7 @@ const pageComponents = {
   users: UsersPage,
   'ai-models': AIModelsPage,
   'cloud-platforms': CloudPlatformPage,
+  'resource-monitor': ResourceMonitorPage,
 };
 
 // 页面元信息（标题 + 副标题）
@@ -35,6 +37,7 @@ const PAGE_META = {
   users:             { title: '用户管理',   subtitle: '管理平台用户账号和权限' },
   'ai-models':       { title: '模型配置',   subtitle: '配置 AI 服务提供商参数' },
   'cloud-platforms': { title: '接入云平台', subtitle: '管理 EasyStack、ZStack 等多云接入' },
+  'resource-monitor': { title: '资源监控', subtitle: '实时监控云平台资源状态与告警信息' },
 };
 
 const THEMES = [

@@ -32,7 +32,7 @@ const menuGroups = [
     label: '资源管理',
     items: [
       { id: 'cloud-platforms', label: '接入云平台', icon: Cloud },
-      { id: 'resource-monitor', label: '资源监控', icon: Activity, disabled: true },
+      { id: 'resource-monitor', label: '资源监控', icon: Activity },
     ],
   },
   {

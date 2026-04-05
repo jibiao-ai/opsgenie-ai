@@ -93,6 +93,9 @@ export const getAIProviders = () => api.get('/ai-providers');
 export const updateAIProvider = (id, data) => api.put(`/ai-providers/${id}`, data);
 export const testAIProvider = (id) => api.post(`/ai-providers/${id}/test`);
 
+// Resource Monitor (big-screen)
+export const getResourceMonitor = () => api.get('/resource-monitor');
+
 // Cloud Platforms
 export const getCloudPlatforms = () => api.get('/cloud-platforms');
 export const createCloudPlatform = (data) => api.post('/cloud-platforms', data);
