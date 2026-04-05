@@ -37,3 +37,5 @@ rabbitmq_data/
 *.out
 cloud_agent.db
 backend/server
+node_modules/
+screenshots/

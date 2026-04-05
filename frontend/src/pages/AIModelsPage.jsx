@@ -223,6 +223,17 @@ export default function AIModelsPage() {
     });
   };
 
+  // 提取错误消息的辅助函数（兼容多种后端返回格式）
+  const extractErrorMessage = (err, fallback = '连接失败，请检查 API Key 和网络') => {
+    if (!err) return fallback;
+    // 后端 response.BadRequest 返回 {code: -1, message: "xxx"}
+    if (typeof err === 'object' && err.message && typeof err.message === 'string') return err.message;
+    // Axios 原始错误
+    if (err.response?.data?.message) return err.response.data.message;
+    if (typeof err === 'string') return err;
+    return fallback;
+  };
+
   // 连通测试
   const handleTest = async () => {
     if (!testProviderId) { toast.error('请选择要测试的模型'); return; }
@@ -234,11 +245,12 @@ export default function AIModelsPage() {
         setTestResult({ ok: true, message: res.data?.message || '连接成功' });
         toast.success('连接测试成功');
       } else {
-        setTestResult({ ok: false, message: res.message || '连接失败' });
-        toast.error(res.message || '连接失败');
+        const msg = res.message || '连接失败';
+        setTestResult({ ok: false, message: msg });
+        toast.error(msg);
       }
     } catch (err) {
-      const msg = err?.message || '连接失败，请检查 API Key 和网络';
+      const msg = extractErrorMessage(err);
       setTestResult({ ok: false, message: msg });
       toast.error(msg);
     } finally {
@@ -397,8 +409,9 @@ export default function AIModelsPage() {
                                   if (res.code === 0) toast.success('连接正常');
                                   else toast.error(res.message || '连接失败');
                                 }).catch((err) => {
-                                  setListTestResult((prev) => ({ ...prev, [provider.id]: { ok: false, message: err.message } }));
-                                  toast.error(err.message || '连接失败');
+                                  const errMsg = extractErrorMessage(err);
+                                  setListTestResult((prev) => ({ ...prev, [provider.id]: { ok: false, message: errMsg } }));
+                                  toast.error(errMsg);
                                 }).finally(() => {
                                   setListTesting((prev) => ({ ...prev, [provider.id]: false }));
                                 });

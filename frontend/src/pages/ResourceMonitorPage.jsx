@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Cloud,
   Server,
@@ -20,6 +20,10 @@ import {
   AlertCircle,
   BarChart3,
   Bot,
+  Clock,
+  Zap,
+  MonitorSpeaker,
+  Gauge,
 } from 'lucide-react';
 import { getResourceMonitor } from '../services/api';
 import useStore from '../store/useStore';
@@ -27,11 +31,73 @@ import useStore from '../store/useStore';
 // Auto-refresh interval (30 seconds)
 const REFRESH_INTERVAL = 30000;
 
+// Simulated time-series data (last 12 data points) for mini-chart
+function useMiniChart(currentValue, maxPoints = 12) {
+  const [history, setHistory] = useState([]);
+  useEffect(() => {
+    if (currentValue == null || currentValue === '--') return;
+    setHistory((prev) => {
+      const next = [...prev, currentValue];
+      if (next.length > maxPoints) return next.slice(-maxPoints);
+      return next;
+    });
+  }, [currentValue, maxPoints]);
+  return history;
+}
+
+// Simple CSS bar-chart component
+function MiniBarChart({ data, color = '#513CC8', height = 32 }) {
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data, 1);
+  return (
+    <div className="flex items-end gap-px" style={{ height }}>
+      {data.map((v, i) => (
+        <div
+          key={i}
+          className="flex-1 rounded-t-sm transition-all duration-500"
+          style={{
+            height: `${Math.max((v / max) * 100, 8)}%`,
+            background: i === data.length - 1 ? color : `${color}60`,
+            minWidth: 3,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// Donut/ring progress component
+function RingProgress({ value, max, size = 64, strokeWidth = 6, color = '#513CC8', label }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = max > 0 ? Math.min(value / max, 1) : 0;
+  const offset = circumference * (1 - pct);
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} stroke="#e5e7eb" strokeWidth={strokeWidth} fill="none" />
+        <circle
+          cx={size / 2} cy={size / 2} r={radius}
+          stroke={color} strokeWidth={strokeWidth} fill="none"
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          strokeLinecap="round"
+          className="transition-all duration-700"
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="text-sm font-bold text-gray-800">{value}</span>
+        {label && <span className="text-[10px] text-gray-400">{label}</span>}
+      </div>
+    </div>
+  );
+}
+
 export default function ResourceMonitorPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [fullscreen, setFullscreen] = useState(false);
   const setActivePage = useStore((s) => s.setActivePage);
 
   const loadData = useCallback(async (isRefresh = false) => {
@@ -56,6 +122,18 @@ export default function ResourceMonitorPage() {
     return () => clearInterval(timer);
   }, [loadData]);
 
+  // Mini-chart data histories
+  const vmHistory = useMiniChart(data?.total_vms);
+  const volumeHistory = useMiniChart(data?.total_volumes);
+  const alertHistory = useMiniChart(data?.firing_alerts);
+
+  // Time display
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   // ============ Summary cards ============
   const summaryCards = [
     {
@@ -66,6 +144,7 @@ export default function ResourceMonitorPage() {
       bg: 'bg-blue-50',
       ring: 'ring-blue-200',
       desc: '已接入平台',
+      color: '#3b82f6',
     },
     {
       label: '虚拟机数',
@@ -75,6 +154,8 @@ export default function ResourceMonitorPage() {
       bg: 'bg-violet-50',
       ring: 'ring-violet-200',
       desc: '运行中实例',
+      color: '#7c3aed',
+      chart: vmHistory,
     },
     {
       label: '云硬盘数',
@@ -84,6 +165,8 @@ export default function ResourceMonitorPage() {
       bg: 'bg-emerald-50',
       ring: 'ring-emerald-200',
       desc: '块存储卷',
+      color: '#10b981',
+      chart: volumeHistory,
     },
     {
       label: '正在告警',
@@ -94,6 +177,8 @@ export default function ResourceMonitorPage() {
       ring: data?.firing_alerts > 0 ? 'ring-red-200' : 'ring-gray-200',
       desc: '活跃告警',
       pulse: data?.firing_alerts > 0,
+      color: data?.firing_alerts > 0 ? '#ef4444' : '#9ca3af',
+      chart: alertHistory,
     },
     {
       label: '已恢复告警',
@@ -103,6 +188,7 @@ export default function ResourceMonitorPage() {
       bg: 'bg-teal-50',
       ring: 'ring-teal-200',
       desc: '已自动恢复',
+      color: '#14b8a6',
     },
     {
       label: 'AI 智能体',
@@ -112,6 +198,7 @@ export default function ResourceMonitorPage() {
       bg: 'bg-amber-50',
       ring: 'ring-amber-200',
       desc: '运行中 Agent',
+      color: '#f59e0b',
     },
   ];
 
@@ -142,6 +229,15 @@ export default function ResourceMonitorPage() {
     }
   };
 
+  // Compute overall health score
+  const healthScore = useMemo(() => {
+    if (!data?.components) return null;
+    const total = data.components.length;
+    if (total === 0) return null;
+    const healthy = data.components.filter(c => c.status === 'healthy').length;
+    return { healthy, total, pct: Math.round((healthy / total) * 100) };
+  }, [data]);
+
   // ============ Shimmer loading placeholders ============
   const ShimmerCard = () => (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 animate-pulse">
@@ -155,7 +251,7 @@ export default function ResourceMonitorPage() {
   );
 
   return (
-    <div className="h-full overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+    <div className={`h-full overflow-y-auto ${fullscreen ? 'fixed inset-0 z-50 bg-gray-50' : ''}`} style={{ scrollbarWidth: 'thin' }}>
       <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
 
         {/* ===== Header with refresh ===== */}
@@ -164,10 +260,27 @@ export default function ResourceMonitorPage() {
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-6 rounded-full" style={{ background: '#513CC8' }} />
               <h2 className="text-xl font-bold text-gray-800">资源监控大屏</h2>
+              {healthScore && (
+                <span className={`ml-2 flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border font-medium ${
+                  healthScore.pct === 100
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : healthScore.pct >= 50
+                      ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                      : 'bg-red-50 text-red-700 border-red-200'
+                }`}>
+                  <Gauge className="w-3 h-3" />
+                  健康评分 {healthScore.pct}%
+                </span>
+              )}
             </div>
             <p className="text-sm text-gray-400 mt-1 ml-3.5">实时监控所有接入云平台的资源状态和告警信息</p>
           </div>
           <div className="flex items-center gap-3">
+            {/* Live clock */}
+            <div className="flex items-center gap-1.5 text-xs text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
+              <Clock className="w-3 h-3" />
+              {now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </div>
             {lastRefresh && (
               <span className="text-xs text-gray-400">
                 上次刷新: {lastRefresh.toLocaleTimeString('zh-CN')}
@@ -196,7 +309,7 @@ export default function ResourceMonitorPage() {
               return (
                 <div
                   key={i}
-                  className={`relative bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-lg transition-all duration-300 overflow-hidden group`}
+                  className="relative bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-lg transition-all duration-300 overflow-hidden group"
                 >
                   {/* Decorative gradient accent */}
                   <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${card.gradient}`} />
@@ -218,6 +331,12 @@ export default function ResourceMonitorPage() {
                     )}
                   </div>
                   <p className="text-xs text-gray-400 mt-1.5">{card.desc}</p>
+                  {/* Mini trend chart */}
+                  {card.chart && card.chart.length > 1 && (
+                    <div className="mt-3">
+                      <MiniBarChart data={card.chart} color={card.color} height={24} />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -406,12 +525,24 @@ export default function ResourceMonitorPage() {
         {/* ===== Component Health Section ===== */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
           <div className="px-6 py-4 border-b border-gray-50 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <Activity className="w-4.5 h-4.5 text-[#513CC8]" />
               <div>
                 <h3 className="text-base font-semibold text-gray-800">云平台组件健康状态</h3>
                 <p className="text-xs text-gray-400 mt-0.5">OpenStack / EasyStack 核心服务运行情况</p>
               </div>
+              {/* Ring health indicator */}
+              {healthScore && (
+                <div className="ml-4">
+                  <RingProgress
+                    value={healthScore.healthy}
+                    max={healthScore.total}
+                    size={48}
+                    strokeWidth={5}
+                    color={healthScore.pct === 100 ? '#10b981' : healthScore.pct >= 50 ? '#eab308' : '#ef4444'}
+                  />
+                </div>
+              )}
             </div>
             {!loading && data?.components && (
               <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${
@@ -472,8 +603,89 @@ export default function ResourceMonitorPage() {
           </div>
         </div>
 
+        {/* ===== Resource Distribution Overview ===== */}
+        {!loading && data && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
+            <div className="px-6 py-4 border-b border-gray-50 flex items-center gap-2">
+              <BarChart3 className="w-4.5 h-4.5 text-[#513CC8]" />
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">资源分布概览</h3>
+                <p className="text-xs text-gray-400 mt-0.5">各云平台资源占比与AI服务状态</p>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* VM Distribution */}
+                <div className="flex flex-col items-center">
+                  <RingProgress
+                    value={data.total_vms || 0}
+                    max={Math.max(data.total_vms || 0, 10)}
+                    size={80}
+                    strokeWidth={8}
+                    color="#7c3aed"
+                    label="虚拟机"
+                  />
+                  <p className="text-sm text-gray-500 mt-3">虚拟机总数</p>
+                  {data.platform_resources?.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2 justify-center">
+                      {data.platform_resources.map((p, idx) => (
+                        <span key={idx} className="text-xs bg-violet-50 text-violet-600 px-2 py-0.5 rounded-full border border-violet-100">
+                          {p.name}: {p.vm_count}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Volume Distribution */}
+                <div className="flex flex-col items-center">
+                  <RingProgress
+                    value={data.total_volumes || 0}
+                    max={Math.max(data.total_volumes || 0, 10)}
+                    size={80}
+                    strokeWidth={8}
+                    color="#10b981"
+                    label="云硬盘"
+                  />
+                  <p className="text-sm text-gray-500 mt-3">云硬盘总数</p>
+                  {data.platform_resources?.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2 justify-center">
+                      {data.platform_resources.map((p, idx) => (
+                        <span key={idx} className="text-xs bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full border border-emerald-100">
+                          {p.name}: {p.volume_count}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* AI Services */}
+                <div className="flex flex-col items-center">
+                  <RingProgress
+                    value={data.ai_providers || 0}
+                    max={Math.max((data.ai_providers || 0) + (data.agents || 0), 10)}
+                    size={80}
+                    strokeWidth={8}
+                    color="#f59e0b"
+                    label="AI服务"
+                  />
+                  <p className="text-sm text-gray-500 mt-3">AI 服务状态</p>
+                  <div className="mt-2 flex flex-wrap gap-2 justify-center">
+                    <span className="text-xs bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full border border-amber-100">
+                      AI 模型: {data.ai_providers || 0}
+                    </span>
+                    <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full border border-orange-100">
+                      智能体: {data.agents || 0}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ===== Cross-module Quick Links ===== */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
             {
               title: '接入云平台',
@@ -495,6 +707,13 @@ export default function ResourceMonitorPage() {
               icon: Cpu,
               page: 'ai-models',
               gradient: 'from-amber-500 to-orange-600',
+            },
+            {
+              title: '定时任务',
+              desc: '管理周期性巡检和自动化运维任务',
+              icon: Clock,
+              page: 'scheduled-tasks',
+              gradient: 'from-teal-500 to-cyan-600',
             },
           ].map((link, i) => {
             const Icon = link.icon;

@@ -760,19 +760,50 @@ func (h *Handler) TestAIProvider(c *gin.Context) {
 		return
 	}
 
-	// Parse error response
+	// Parse error response – support multiple formats:
+	//  1. OpenAI style:      {"error": {"message": "...", "type": "...", "code": "..."}}
+	//  2. SiliconFlow style: {"code": 30001, "message": "Sorry, your account balance is insufficient"}
+	//  3. Plain string:      {"error": "some error message"}
+	//  4. Raw body fallback
 	var errResp map[string]interface{}
 	json.Unmarshal(bodyBytes, &errResp)
-	errMsg := fmt.Sprintf("API 返回错误 (HTTP %d)", resp.StatusCode)
+	errMsg := ""
 	if errResp != nil {
+		// Format 1: OpenAI {"error": {"message": "..."}}
 		if e, ok := errResp["error"]; ok {
-			if eMap, ok := e.(map[string]interface{}); ok {
-				if msg, ok := eMap["message"].(string); ok {
+			switch ev := e.(type) {
+			case map[string]interface{}:
+				if msg, ok := ev["message"].(string); ok && msg != "" {
 					errMsg = msg
+				}
+			case string:
+				// Format 3: {"error": "some error message"}
+				if ev != "" {
+					errMsg = ev
 				}
 			}
 		}
+		// Format 2: SiliconFlow / generic {"message": "..."}
+		if errMsg == "" {
+			if msg, ok := errResp["message"].(string); ok && msg != "" {
+				errMsg = msg
+			}
+		}
 	}
+	// Fallback: include HTTP status and truncated body
+	if errMsg == "" {
+		bodyStr := string(bodyBytes)
+		if len(bodyStr) > 200 {
+			bodyStr = bodyStr[:200] + "..."
+		}
+		if bodyStr != "" {
+			errMsg = fmt.Sprintf("API 返回错误 (HTTP %d): %s", resp.StatusCode, bodyStr)
+		} else {
+			errMsg = fmt.Sprintf("API 返回错误 (HTTP %d)", resp.StatusCode)
+		}
+	}
+
+	logger.Log.Warnf("AI provider test failed for %s: HTTP %d - %s", provider.Name, resp.StatusCode, errMsg)
 	response.BadRequest(c, errMsg)
 }
 
