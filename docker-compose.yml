@@ -81,25 +81,28 @@ services:
       AI_API_KEY: ${AI_API_KEY:-}
       AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
       AI_MODEL: ${AI_MODEL:-gpt-4}
-      # RabbitMQ retry (production: 30 retries)
+      # RabbitMQ connection retry count
       MQ_RETRIES: "30"
-      # Frontend dist path inside container
-      FRONTEND_DIST: /app/frontend/dist
       # Logging
       LOG_LEVEL: info
-    ports:
-      - "8080:8080"
+      # JWT Secret (override in production!)
+      JWT_SECRET: ${JWT_SECRET:-cloud-agent-secret-key-2024}
+    # backend port is only exposed internally; nginx proxies /api/ to backend:8080
+    # Remove the public port mapping to prevent bypassing nginx
+    # ports:
+    #   - "127.0.0.1:8080:8080"
     depends_on:
       mysql:
         condition: service_healthy
+      # NOTE: rabbitmq dependency uses service_started (not service_healthy) because
+      # RabbitMQ can take 30-60s to become healthy, blocking backend startup.
+      # The backend code already handles RabbitMQ connection failures gracefully.
       rabbitmq:
-        condition: service_healthy
-    volumes:
-      - ./frontend/dist:/app/frontend/dist:ro
+        condition: service_started
     networks:
       - cloud-agent-net
 
-  # React Frontend (Nginx)
+  # React Frontend (Nginx - serves static files and proxies /api to backend)
   frontend:
     build:
       context: ./frontend
@@ -108,7 +111,7 @@ services:
     container_name: cloud-agent-frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "0.0.0.0:80:80"
     depends_on:
       - backend
     networks:

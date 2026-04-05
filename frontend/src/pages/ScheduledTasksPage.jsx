@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, Plus, Play, Pause, Trash2 } from 'lucide-react';
+import { Clock, Plus, Play, Pause, Trash2, Loader2 } from 'lucide-react';
 import { getScheduledTasks } from '../services/api';
 
 export default function ScheduledTasksPage() {
@@ -26,63 +26,74 @@ export default function ScheduledTasksPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-8 py-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-white">定时任务</h1>
-            <p className="text-amber-100 text-sm mt-1">配置定时执行的自动化运维任务</p>
+      <div className="p-6 space-y-6 max-w-5xl">
+        {/* 页面头部卡片 */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <div className="px-6 py-4 flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-semibold text-gray-800">定时任务</h1>
+              <p className="text-sm text-gray-400 mt-0.5">配置定时执行的自动化运维任务</p>
+            </div>
+            <button className="flex items-center gap-2 bg-[#513CC8] hover:bg-[#4230A6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              <Plus className="w-4 h-4" /> 新建任务
+            </button>
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-lg text-sm transition">
-            <Plus className="w-4 h-4" /> 新建任务
-          </button>
         </div>
-      </div>
-      <div className="p-6 max-w-5xl mx-auto">
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">任务名称</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">Cron 表达式</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">类型</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase">状态</th>
-                <th className="text-right px-5 py-3 text-xs font-medium text-gray-500 uppercase">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allTasks.map((task) => (
-                <tr key={task.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-amber-500" />
-                      <span className="text-sm font-medium text-gray-700">{task.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3">
-                    <code className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600">{task.cron_expr}</code>
-                  </td>
-                  <td className="px-5 py-3">
-                    <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded">{task.task_type}</span>
-                  </td>
-                  <td className="px-5 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded ${task.is_active ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
-                      {task.is_active ? '运行中' : '已停止'}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 text-right">
-                    <div className="flex justify-end gap-1">
-                      <button className="p-1.5 text-gray-400 hover:text-blue-500 rounded">
-                        {task.is_active ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                      </button>
-                      <button className="p-1.5 text-gray-400 hover:text-red-500 rounded">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+        {/* 任务列表卡片 */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          {loading ? (
+            <div className="flex items-center justify-center h-40">
+              <Loader2 className="w-6 h-6 animate-spin text-[#513CC8]" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">任务名称</th>
+                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Cron 表达式</th>
+                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">类型</th>
+                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">状态</th>
+                    <th className="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {allTasks.map((task) => (
+                    <tr key={task.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-3.5">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-[#513CC8]" />
+                          <span className="text-sm font-medium text-gray-700">{task.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-3.5">
+                        <code className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600">{task.cron_expr}</code>
+                      </td>
+                      <td className="px-6 py-3.5">
+                        <span className="text-xs px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full">{task.task_type}</span>
+                      </td>
+                      <td className="px-6 py-3.5">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${task.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {task.is_active ? '运行中' : '已停止'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3.5 text-right">
+                        <div className="flex justify-end gap-1">
+                          <button className="p-1.5 text-gray-400 hover:text-[#513CC8] hover:bg-[#EEE9FB] rounded-lg transition-colors">
+                            {task.is_active ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                          </button>
+                          <button className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>

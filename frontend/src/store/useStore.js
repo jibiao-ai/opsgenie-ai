@@ -23,6 +23,14 @@ const useStore = create((set, get) => ({
   activePage: 'chat',
   setActivePage: (page) => set({ activePage: page }),
 
+  // Theme: light / dark / blue
+  theme: localStorage.getItem('theme') || 'light',
+  setTheme: (theme) => {
+    localStorage.setItem('theme', theme);
+    document.documentElement.setAttribute('data-theme', theme);
+    set({ theme });
+  },
+
   // Agents
   agents: [],
   selectedAgent: null,

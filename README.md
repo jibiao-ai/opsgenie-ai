@@ -1,241 +1,164 @@
-# Cloud Agent - EasyStack 智能运维平台
+# AIOPS 智能运维平台
 
-<p align="center">
-  <strong>基于自然语言对话的 EasyStack 云平台智能运维系统</strong>
-</p>
+![version](https://img.shields.io/badge/version-v1.2.0-513CC8?style=flat-square)
+![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
+![go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)
+![react](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)
 
-## 项目概述
+> 基于 AI 大模型的智能云平台运维系统，支持多云接入、自然语言运维操作、自动化工作流。
 
-Cloud Agent 是一个 AI 驱动的云平台运维智能体系统，专为 EasyStack 云平台（ECF 6.2.1）设计。用户可以通过自然语言对话的方式完成云主机、云硬盘、网络、安全组、负载均衡、监控告警等运维操作。
+## 功能特性
 
-### 核心特性
+- 🤖 **多模型 AI 对话** — 支持 13 家主流 AI 厂商，可随时切换，一键测试连通性
+- ☁️ **多云平台接入** — 支持 EasyStack（Keystone 认证）和 ZStack（AccessKey 认证）
+- 🛡️ **多用户权限管理** — admin / user 双角色，bcrypt 密码加密，密码强度校验
+- ⚡ **定时任务与工作流** — 支持 Cron 表达式调度、工作流编排
+- 🎨 **三套主题切换** — 白色 / 黑色 / 蓝色主题，实时切换
 
-- **自然语言运维**: 通过对话方式管理 EasyStack 云资源，无需记忆复杂 API
-- **多智能体支持**: 预置运维助手、故障诊断专家、资源优化顾问等多个专业 Agent
-- **EasyStack ECF 6.2.1 API 集成**: 完整对接计算(Nova)、存储(Cinder)、网络(Neutron)、负载均衡(Octavia)、监控(ECMS)等服务
-- **工作流编排**: 支持自动化运维工作流配置与执行
-- **定时任务**: 支持 Cron 表达式配置的定时运维任务
-- **实时通信**: WebSocket 支持实时对话
-- **用户权限管理**: 完整的用户角色与权限体系
+## 支持的 AI 模型
 
-## 技术架构
+| 厂商 | 标识 | 推荐模型 | 说明 |
+|------|------|----------|------|
+| OpenAI | 🤖 | gpt-4o | GPT-4o / GPT-4 / GPT-3.5 系列 |
+| DeepSeek | 🔍 | deepseek-chat | 深度求索，高性价比国产大模型 |
+| 通义千问 | ☁️ | qwen-plus | 阿里云 Qwen-Plus / Qwen-Max 系列 |
+| 智谱 GLM | 🧠 | glm-4 | 智谱 AI GLM-4 / GLM-4-Flash 系列 |
+| MiniMax | ⚡ | abab6.5s-chat | MiniMax abab 系列 |
+| 硅基流动 | 💎 | Qwen/Qwen2.5-7B-Instruct | 支持 Qwen / DeepSeek / GLM 开源模型推理，性价比极高 |
+| Moonshot (Kimi) | 🌙 | moonshot-v1-8k | 超长上下文，8k / 32k / 128k |
+| 百度文心一言 | 🔵 | ernie-4.5-8k | ERNIE 4.5 / 4.0 / Speed 系列 |
+| 火山引擎（豆包） | 🔥 | doubao-pro-4k | 字节豆包 doubao-pro / lite 系列 |
+| 腾讯混元 | 🌀 | hunyuan-pro | 混元 pro / standard 系列 |
+| 百川智能 | 🐋 | Baichuan4 | Baichuan4 / Baichuan3-Turbo 系列 |
+| Anthropic Claude | 🎭 | claude-3-5-sonnet-20241022 | claude-3-5-sonnet / haiku / opus |
+| Google Gemini | ✨ | gemini-2.0-flash | gemini-2.0-flash / 1.5-pro 系列 |
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Nginx (Frontend)                   │
-│                   React + Vite + TailwindCSS          │
-├─────────────────────────────────────────────────────┤
-│                    Go Backend (Gin)                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │ REST API  │  │ WebSocket│  │  AI Agent Engine  │  │
-│  └────┬─────┘  └────┬─────┘  └────────┬─────────┘  │
-│       │              │                  │             │
-│  ┌────┴──────────────┴──────────────────┴─────────┐  │
-│  │           Service Layer                         │  │
-│  │  ┌─────────┐ ┌───────────┐ ┌────────────────┐  │  │
-│  │  │Auth Svc │ │Chat Svc   │ │EasyStack Client│  │  │
-│  │  └─────────┘ └───────────┘ └────────────────┘  │  │
-│  └─────────────────────────────────────────────────┘  │
-├──────────┬──────────────────────┬────────────────────┤
-│  MySQL   │      RabbitMQ        │  EasyStack Cloud    │
-│  (数据库) │    (消息队列)         │  (ECF 6.2.1 API)   │
-└──────────┴──────────────────────┴────────────────────┘
-```
+## 支持的云平台
 
-### 技术栈
+| 类型 | 认证方式 | 说明 |
+|------|----------|------|
+| EasyStack | Keystone Token | 填写 AuthURL / 用户名 / 密码 / 域名 / 项目名称 |
+| ZStack | AccessKey | 填写 Endpoint / AccessKeyID / AccessKeySecret |
 
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| 前端 | React 18 + Vite | 现代化 SPA 框架 |
-| UI | TailwindCSS | 实用优先的 CSS 框架 |
-| 状态管理 | Zustand | 轻量级状态管理 |
-| 后端 | Go + Gin | 高性能 HTTP 框架 |
-| ORM | GORM | Go ORM 框架 |
-| 数据库 | MySQL 8.0 | 关系型数据库 |
-| 消息队列 | RabbitMQ | AMQP 消息代理 |
-| 容器化 | Docker Compose | 一键部署 |
-| AI | OpenAI API (兼容) | 支持 GPT-4/DeepSeek/Qwen |
+## 快速部署
 
-## 快速开始
-
-### 前置条件
-
-- Docker & Docker Compose
-- EasyStack 云平台访问凭证
-- OpenAI API Key (或兼容 API)
-
-### 1. 克隆项目
+### 使用 Docker Compose（推荐）
 
 ```bash
-git clone https://github.com/jibiao-ai/cloud-agent.git
+# 克隆项目
+git clone <repo-url>
 cd cloud-agent
+
+# 启动所有服务（MySQL + RabbitMQ + Backend + Frontend）
+docker compose up -d
+
+# 查看服务状态
+docker compose ps
+
+# 查看后端日志
+docker compose logs -f backend
 ```
 
-### 2. 配置环境变量
+访问地址：http://localhost （或服务器 IP）
+
+### 本地开发模式
 
 ```bash
-cp .env.example .env
-# 编辑 .env 文件，填入 EasyStack 和 AI API 配置
-```
+# 启动基础服务
+docker compose up -d mysql rabbitmq
 
-### 3. 一键启动
-
-```bash
-docker-compose up -d
-```
-
-### 4. 访问平台
-
-- 前端界面: http://localhost
-- 后端 API: http://localhost:8080
-- RabbitMQ 管理: http://localhost:15672 (guest/guest)
-
-### 默认账号
-
-- 用户名: `admin`
-- 密码: `admin123`
-
-## EasyStack API 集成
-
-基于 ECF 6.2.1 API 文档，已集成以下服务：
-
-### 计算服务 (Nova)
-- 云主机 CRUD、启停、重启、暂停/恢复
-- 规格变更 (Resize)、快照创建
-- 云硬盘挂载/卸载
-- 规格查询、密钥对管理
-
-### 块存储服务 (Cinder)
-- 云硬盘 CRUD
-- 云硬盘扩容
-- 快照管理
-
-### 网络服务 (Neutron SDN)
-- 网络/子网管理
-- 路由器管理、接口绑定
-- 浮动IP 创建/绑定/解绑
-- 安全组和安全组规则管理
-- 端口管理
-
-### 负载均衡 (Octavia)
-- 负载均衡器管理
-- 监听器管理
-- 后端池管理
-
-### 监控告警 (ECMS)
-- PromQL 指标查询
-- 告警信息查询
-- 资源性能 TOP5
-
-### 镜像服务 (Glance)
-- 镜像列表查询
-
-### 认证服务 (Keystone)
-- Token 获取与管理
-- 项目级别认证
-
-## 项目结构
-
-```
-cloud-agent/
-├── backend/                    # Go 后端
-│   ├── cmd/server/main.go      # 入口文件
-│   ├── internal/
-│   │   ├── agent/              # AI Agent 引擎 (Tool Calling)
-│   │   ├── config/             # 配置管理
-│   │   ├── easystack/          # EasyStack API 客户端
-│   │   ├── handler/            # HTTP 处理器
-│   │   ├── middleware/         # 中间件 (Auth/CORS)
-│   │   ├── model/              # 数据模型
-│   │   ├── mq/                 # RabbitMQ 消息队列
-│   │   ├── repository/         # 数据访问层
-│   │   └── service/            # 业务逻辑层
-│   ├── pkg/                    # 公共工具包
-│   ├── Dockerfile
-│   └── go.mod
-├── frontend/                   # React 前端
-│   ├── src/
-│   │   ├── components/         # 通用组件
-│   │   ├── pages/              # 页面组件
-│   │   ├── services/           # API 服务
-│   │   ├── store/              # Zustand 状态管理
-│   │   └── styles/             # 样式文件
-│   ├── Dockerfile
-│   └── package.json
-├── docker/                     # Docker 配置
-│   └── mysql/init.sql
-├── docker-compose.yml          # 容器编排
-├── .env.example                # 环境变量模板
-└── README.md
-```
-
-## API 端点
-
-### 认证
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | /api/login | 用户登录 |
-
-### 智能体
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | /api/agents | 获取智能体列表 |
-| POST | /api/agents | 创建智能体 |
-| PUT | /api/agents/:id | 更新智能体 |
-| DELETE | /api/agents/:id | 删除智能体 |
-
-### 对话
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | /api/conversations | 获取会话列表 |
-| POST | /api/conversations | 创建新会话 |
-| DELETE | /api/conversations/:id | 删除会话 |
-| GET | /api/conversations/:id/messages | 获取消息列表 |
-| POST | /api/conversations/:id/messages | 发送消息 |
-| GET | /api/ws | WebSocket 连接 |
-
-### 其他
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | /api/dashboard | 仪表盘统计 |
-| GET | /api/skills | 技能列表 |
-| GET | /api/workflows | 工作流列表 |
-| GET | /api/scheduled-tasks | 定时任务列表 |
-| GET | /api/users | 用户列表(管理员) |
-
-## 开发指南
-
-### 本地开发
-
-```bash
-# 启动基础设施
-docker-compose up -d mysql rabbitmq
-
-# 后端开发
+# 后端（需要 Go 1.21+）
 cd backend
-go mod tidy
+go mod download
 go run cmd/server/main.go
 
-# 前端开发
+# 前端（需要 Node.js 18+）
 cd frontend
 npm install
 npm run dev
 ```
 
-### 环境变量说明
+## 环境变量
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| EASYSTACK_AUTH_URL | Keystone 认证地址 | - |
-| EASYSTACK_USERNAME | 用户名 | admin |
-| EASYSTACK_PASSWORD | 密码 | - |
-| EASYSTACK_DOMAIN | 域名 | default |
-| EASYSTACK_PROJECT | 项目名 | admin |
-| EASYSTACK_PROJECT_ID | 项目ID | - |
-| AI_API_KEY | AI API 密钥 | - |
-| AI_BASE_URL | AI API 地址 | https://api.openai.com/v1 |
-| AI_MODEL | AI 模型名 | gpt-4 |
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `DB_DRIVER` | `mysql` | 数据库驱动，可选 `mysql` / `sqlite` |
+| `DB_HOST` | `mysql` | MySQL 主机名 |
+| `DB_PORT` | `3306` | MySQL 端口 |
+| `DB_NAME` | `cloud_agent` | 数据库名 |
+| `DB_USER` | `root` | 数据库用户名 |
+| `DB_PASSWORD` | `password` | 数据库密码 |
+| `DB_PATH` | `cloud_agent.db` | SQLite 文件路径（仅 sqlite 模式） |
+| `JWT_SECRET` | `change-me-in-production` | JWT 签名密钥，**生产环境必须修改** |
+| `SERVER_PORT` | `8080` | 后端监听端口 |
+| `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672/` | RabbitMQ 连接地址（可选） |
+| `EASYSTACK_AUTH_URL` | — | EasyStack Keystone 地址 |
+| `EASYSTACK_USERNAME` | — | EasyStack 用户名 |
+| `EASYSTACK_PASSWORD` | — | EasyStack 密码 |
+| `EASYSTACK_DOMAIN` | `Default` | EasyStack 域名 |
+| `EASYSTACK_PROJECT` | — | EasyStack 项目名 |
 
-## 许可证
+## 默认账号
 
-MIT License
+| 字段 | 值 |
+|------|----|
+| 用户名 | `admin` |
+| 密码 | `Admin@2024!` |
+
+> ⚠️ **首次登录后请立即修改密码！**
+
+## 密码安全要求
+
+系统强制密码策略（创建/修改用户时生效）：
+
+- ✅ 长度至少 **9 位**
+- ✅ 包含至少一个**大写字母**（A-Z）
+- ✅ 包含至少一个**小写字母**（a-z）
+- ✅ 包含至少一个**数字**（0-9）
+- ✅ 包含至少一个**特殊字符**（`!@#$%^&*` 等）
+
+示例合法密码：`Admin@2024!`、`MyP@ssw0rd!`
+
+## 整体架构
+
+### 功能架构图
+
+![功能架构图](docs/aiops_feature_diagram.png)
+
+### 组件架构图
+
+![组件架构图](docs/aiops_component_diagram.png)
+
+### 分层说明
+
+| 层级 | 职责 |
+|------|------|
+| **展示层** | React SPA，用户交互界面，Nginx 承载静态文件并反向代理 API |
+| **应用服务层** | Go+Gin 核心业务逻辑，JWT 鉴权、AI 推理引擎、异步任务调度 |
+| **能力集成层** | 对接 13 家 AI 模型厂商（统一 OpenAI 协议）+ EasyStack/ZStack 多云平台 |
+| **数据存储层** | MySQL 持久化所有业务数据，RabbitMQ 异步解耦耗时任务 |
+| **基础设施层** | Docker 容器化部署，一键 `docker compose up` 拉起全栈环境 |
+
+## API 接口概览
+
+所有 API 以 `/api` 为前缀，受保护接口需携带 `Authorization: Bearer <token>` 请求头。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/login` | 用户登录，返回 JWT Token |
+| GET | `/api/profile` | 获取当前用户信息 |
+| GET | `/api/dashboard` | 获取仪表盘统计数据 |
+| GET/POST/PUT/DELETE | `/api/agents` | 智能体 CRUD |
+| GET/POST/DELETE | `/api/conversations` | 会话 CRUD |
+| GET/POST | `/api/conversations/:id/messages` | 消息列表和发送 |
+| GET | `/api/ws` | WebSocket 实时对话 |
+| GET | `/api/skills` | 技能中心列表 |
+| GET/POST | `/api/workflows` | 工作流 CRUD |
+| GET/POST | `/api/scheduled-tasks` | 定时任务 CRUD |
+| GET/PUT/POST | `/api/ai-providers` | AI 模型提供商配置和测试 |
+| GET/POST/PUT/DELETE/POST | `/api/cloud-platforms` | 云平台接入 CRUD 和连接测试 |
+| GET/POST/PUT/DELETE | `/api/users` | 用户管理（Admin 权限） |
+
+## License
+
+MIT

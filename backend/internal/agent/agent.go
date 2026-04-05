@@ -12,6 +12,7 @@ import (
 	"github.com/jibiao-ai/cloud-agent/internal/config"
 	"github.com/jibiao-ai/cloud-agent/internal/easystack"
 	"github.com/jibiao-ai/cloud-agent/internal/model"
+	"github.com/jibiao-ai/cloud-agent/internal/repository"
 	"github.com/jibiao-ai/cloud-agent/pkg/logger"
 )
 
@@ -309,7 +310,12 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 	messages = append(messages, history...)
 	messages = append(messages, ChatMessage{Role: "user", Content: userMsg})
 
-	modelName := a.aiCfg.Model
+	// Resolve model name: agent-specific > database provider > static config
+	_, _, dbModelName := a.getActiveAIConfig()
+	modelName := dbModelName
+	if modelName == "" {
+		modelName = a.aiCfg.Model
+	}
 	if agentModel.Model != "" {
 		modelName = agentModel.Model
 	}
@@ -394,16 +400,39 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 	return "", fmt.Errorf("too many iterations in tool calling loop")
 }
 
+// getActiveAIConfig returns the AI config by checking the database for the default/enabled provider first,
+// falling back to the static config if no database provider is configured.
+func (a *Agent) getActiveAIConfig() (baseURL string, apiKey string, modelName string) {
+	// Try to find the default enabled provider from the database
+	if repository.DB != nil {
+		var provider model.AIProvider
+		// First try: default + enabled + has API key
+		err := repository.DB.Where("is_default = ? AND is_enabled = ? AND api_key != ''", true, true).First(&provider).Error
+		if err != nil {
+			// Fallback: any enabled provider with an API key
+			err = repository.DB.Where("is_enabled = ? AND api_key != ''", true).First(&provider).Error
+		}
+		if err == nil && provider.APIKey != "" && provider.BaseURL != "" {
+			logger.Log.Infof("Using database AI provider: %s (base_url=%s, model=%s)", provider.Label, provider.BaseURL, provider.Model)
+			return provider.BaseURL, provider.APIKey, provider.Model
+		}
+	}
+	// Fallback to static config
+	return a.aiCfg.BaseURL, a.aiCfg.APIKey, a.aiCfg.Model
+}
+
 func (a *Agent) callAI(reqBody interface{}) ([]byte, error) {
+	baseURL, apiKey, _ := a.getActiveAIConfig()
+
 	body, _ := json.Marshal(reqBody)
-	url := fmt.Sprintf("%s/chat/completions", strings.TrimRight(a.aiCfg.BaseURL, "/"))
+	url := fmt.Sprintf("%s/chat/completions", strings.TrimRight(baseURL, "/"))
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", a.aiCfg.APIKey))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)

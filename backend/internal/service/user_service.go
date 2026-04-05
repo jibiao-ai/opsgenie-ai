@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"strings"
+	"unicode"
 
 	"github.com/jibiao-ai/cloud-agent/internal/model"
 	"github.com/jibiao-ai/cloud-agent/internal/repository"
@@ -15,6 +16,40 @@ func GetUserByID(id uint, user *model.User) error {
 // isBcryptHash checks whether s is already a bcrypt hash (starts with $2a$, $2b$, etc.)
 func isBcryptHash(s string) bool {
 	return strings.HasPrefix(s, "$2a$") || strings.HasPrefix(s, "$2b$") || strings.HasPrefix(s, "$2y$")
+}
+
+// validatePassword enforces password strength policy:
+// at least 9 chars, must contain uppercase, lowercase, digit, and special character.
+func validatePassword(password string) error {
+	if len(password) < 9 {
+		return errors.New("密码长度至少9位")
+	}
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
+	for _, c := range password {
+		switch {
+		case unicode.IsUpper(c):
+			hasUpper = true
+		case unicode.IsLower(c):
+			hasLower = true
+		case unicode.IsDigit(c):
+			hasDigit = true
+		case unicode.IsPunct(c) || unicode.IsSymbol(c):
+			hasSpecial = true
+		}
+	}
+	if !hasUpper {
+		return errors.New("密码必须包含大写字母")
+	}
+	if !hasLower {
+		return errors.New("密码必须包含小写字母")
+	}
+	if !hasDigit {
+		return errors.New("密码必须包含数字")
+	}
+	if !hasSpecial {
+		return errors.New("密码必须包含特殊字符")
+	}
+	return nil
 }
 
 // GetUsers returns all users.
@@ -34,8 +69,11 @@ func CreateUser(user *model.User) error {
 	if user.Password == "" {
 		return errors.New("password is required")
 	}
-	// Hash password only if not already hashed
+	// Validate password strength only for plaintext passwords
 	if !isBcryptHash(user.Password) {
+		if err := validatePassword(user.Password); err != nil {
+			return err
+		}
 		hashed, err := HashPassword(user.Password)
 		if err != nil {
 			return err
@@ -57,6 +95,9 @@ func UpdateUser(user *model.User) error {
 
 	// Only update password when explicitly provided and different from current hash
 	if user.Password != "" && !isBcryptHash(user.Password) {
+		if err := validatePassword(user.Password); err != nil {
+			return err
+		}
 		hashed, err := HashPassword(user.Password)
 		if err != nil {
 			return err

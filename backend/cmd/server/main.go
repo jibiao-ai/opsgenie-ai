@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/gin-contrib/cors"
@@ -77,46 +76,10 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	// Serve frontend static files
-	// Look for frontend dist in multiple locations
-	frontendDist := os.Getenv("FRONTEND_DIST")
-	if frontendDist == "" {
-		// Try relative paths from the binary location
-		candidates := []string{
-			"./frontend/dist",          // when running from project root
-			"../frontend/dist",         // when running from backend dir
-			"../../frontend/dist",      // when running from backend/cmd/server
-			"/app/frontend/dist",       // Docker path
-		}
-		for _, c := range candidates {
-			if info, err := os.Stat(filepath.Join(c, "index.html")); err == nil && !info.IsDir() {
-				frontendDist = c
-				break
-			}
-		}
-	}
-	if frontendDist != "" {
-		logger.Log.Infof("Serving frontend from: %s", frontendDist)
-		r.Static("/assets", filepath.Join(frontendDist, "assets"))
-		r.StaticFile("/favicon.ico", filepath.Join(frontendDist, "favicon.ico"))
-		indexFile := filepath.Join(frontendDist, "index.html")
-		r.GET("/", func(c *gin.Context) {
-			c.File(indexFile)
-		})
-		r.NoRoute(func(c *gin.Context) {
-			// Only serve index.html for non-API routes (SPA routing)
-			if len(c.Request.URL.Path) > 4 && c.Request.URL.Path[:4] == "/api" {
-				c.JSON(http.StatusNotFound, gin.H{"code": -1, "message": "not found"})
-				return
-			}
-			c.File(indexFile)
-		})
-	} else {
-		logger.Log.Warn("Frontend dist directory not found, serving API only")
-		r.NoRoute(func(c *gin.Context) {
-			c.JSON(http.StatusNotFound, gin.H{"code": -1, "message": "not found"})
-		})
-	}
+	// Backend serves API only. Frontend static files are served by the nginx container.
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{"code": -1, "message": "not found"})
+	})
 
 	// API routes
 	api := r.Group("/api")
@@ -171,6 +134,13 @@ func main() {
 			auth.GET("/ai-providers", h.GetAIProviders)
 			auth.PUT("/ai-providers/:id", h.UpdateAIProvider)
 			auth.POST("/ai-providers/:id/test", h.TestAIProvider)
+
+			// Cloud Platforms
+			auth.GET("/cloud-platforms", h.ListCloudPlatforms)
+			auth.POST("/cloud-platforms", h.CreateCloudPlatform)
+			auth.PUT("/cloud-platforms/:id", h.UpdateCloudPlatform)
+			auth.DELETE("/cloud-platforms/:id", h.DeleteCloudPlatform)
+			auth.POST("/cloud-platforms/:id/test", h.TestCloudPlatform)
 
 			// Admin routes
 			admin := auth.Group("")
