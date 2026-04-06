@@ -1603,6 +1603,8 @@ func (h *Handler) CreateCloudPlatform(c *gin.Context) {
 		DomainName      string `json:"domain_name"`
 		ProjectName     string `json:"project_name"`
 		ProjectID       string `json:"project_id"`
+		HostIP          string `json:"host_ip"`
+		BaseDomain      string `json:"base_domain"`
 		AccessKeyID     string `json:"access_key_id"`
 		AccessKeySecret string `json:"access_key_secret"`
 		Endpoint        string `json:"endpoint"`
@@ -1616,15 +1618,22 @@ func (h *Handler) CreateCloudPlatform(c *gin.Context) {
 		response.BadRequest(c, "type must be easystack or zstack")
 		return
 	}
+	// For EasyStack: auto-generate AuthURL from HostIP + BaseDomain if provided
+	authURL := req.AuthURL
+	if req.Type == "easystack" && req.HostIP != "" && req.BaseDomain != "" {
+		authURL = fmt.Sprintf("https://keystone.%s", strings.TrimLeft(req.BaseDomain, "."))
+	}
 	platform := model.CloudPlatform{
 		Name:            req.Name,
 		Type:            req.Type,
-		AuthURL:         req.AuthURL,
+		AuthURL:         authURL,
 		Username:        req.Username,
 		Password:        req.Password,
 		DomainName:      req.DomainName,
 		ProjectName:     req.ProjectName,
 		ProjectID:       req.ProjectID,
+		HostIP:          req.HostIP,
+		BaseDomain:      req.BaseDomain,
 		AccessKeyID:     req.AccessKeyID,
 		AccessKeySecret: req.AccessKeySecret,
 		Endpoint:        req.Endpoint,
@@ -1660,6 +1669,8 @@ func (h *Handler) UpdateCloudPlatform(c *gin.Context) {
 		DomainName      string `json:"domain_name"`
 		ProjectName     string `json:"project_name"`
 		ProjectID       string `json:"project_id"`
+		HostIP          string `json:"host_ip"`
+		BaseDomain      string `json:"base_domain"`
 		AccessKeyID     string `json:"access_key_id"`
 		AccessKeySecret string `json:"access_key_secret"`
 		Endpoint        string `json:"endpoint"`
@@ -1694,6 +1705,12 @@ func (h *Handler) UpdateCloudPlatform(c *gin.Context) {
 	if req.ProjectID != "" {
 		platform.ProjectID = req.ProjectID
 	}
+	if req.HostIP != "" {
+		platform.HostIP = req.HostIP
+	}
+	if req.BaseDomain != "" {
+		platform.BaseDomain = req.BaseDomain
+	}
 	if req.AccessKeyID != "" {
 		platform.AccessKeyID = req.AccessKeyID
 	}
@@ -1708,6 +1725,10 @@ func (h *Handler) UpdateCloudPlatform(c *gin.Context) {
 	}
 	if req.IsActive != nil {
 		platform.IsActive = *req.IsActive
+	}
+	// Re-generate AuthURL from HostIP + BaseDomain if both are provided
+	if platform.Type == "easystack" && platform.HostIP != "" && platform.BaseDomain != "" {
+		platform.AuthURL = fmt.Sprintf("https://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
 	}
 	if err := repository.DB.Save(&platform).Error; err != nil {
 		response.InternalError(c, err.Error())
@@ -1750,11 +1771,18 @@ func (h *Handler) TestCloudPlatform(c *gin.Context) {
 	switch platform.Type {
 	case "easystack":
 		// EasyStack: call Keystone v3 token endpoint
-		if platform.AuthURL == "" || platform.Username == "" || platform.Password == "" {
-			response.BadRequest(c, "EasyStack 平台缺少 AuthURL、Username 或 Password")
+		// Resolve Keystone URL: prefer HostIP+BaseDomain, fall back to AuthURL
+		var keystoneBase string
+		if platform.HostIP != "" && platform.BaseDomain != "" {
+			keystoneBase = fmt.Sprintf("https://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
+		} else if platform.AuthURL != "" {
+			keystoneBase = strings.TrimRight(platform.AuthURL, "/")
+		}
+		if keystoneBase == "" || platform.Username == "" || platform.Password == "" {
+			response.BadRequest(c, "EasyStack 平台缺少认证地址(IP+根域名 或 AuthURL)、Username 或 Password")
 			return
 		}
-		keystoneURL := strings.TrimRight(platform.AuthURL, "/") + "/v3/auth/tokens"
+		keystoneURL := keystoneBase + "/v3/auth/tokens"
 		domain := platform.DomainName
 		if domain == "" {
 			domain = "Default"

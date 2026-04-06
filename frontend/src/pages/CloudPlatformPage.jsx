@@ -29,6 +29,7 @@ const PLATFORM_TYPES = [
 
 const emptyEasyStack = {
   name: '', type: 'easystack',
+  host_ip: '', base_domain: '',
   auth_url: '', username: '', password: '',
   domain_name: '', project_name: '', project_id: '',
   description: '',
@@ -209,17 +210,39 @@ function PlatformModal({ open, onClose, onSaved, editPlatform }) {
           {/* EasyStack 字段 */}
           {form.type === 'easystack' && (
             <>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Keystone 认证 URL *</label>
-                <input
-                  type="text"
-                  value={form.auth_url}
-                  onChange={(e) => setForm({ ...form, auth_url: e.target.value })}
-                  placeholder="https://keystone.example.com:5000"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 outline-none"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">平台 IP 地址 *</label>
+                  <input
+                    type="text"
+                    value={form.host_ip}
+                    onChange={(e) => setForm({ ...form, host_ip: e.target.value })}
+                    placeholder="192.168.3.204"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">根域名 *</label>
+                  <input
+                    type="text"
+                    value={form.base_domain}
+                    onChange={(e) => setForm({ ...form, base_domain: e.target.value })}
+                    placeholder="opsl2.svc.cluster.local"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 outline-none"
+                    required
+                  />
+                </div>
               </div>
+              {form.host_ip && form.base_domain && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-700 space-y-0.5">
+                  <p className="font-medium">自动解析的服务地址：</p>
+                  <p>认证: keystone.{form.base_domain}</p>
+                  <p>计算: nova.{form.base_domain}</p>
+                  <p>监控: emla.{form.base_domain}</p>
+                  <p className="text-blue-500">存储 / 网络 / 镜像等服务地址将自动拼接</p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">用户名 *</label>
@@ -509,7 +532,13 @@ export default function CloudPlatformPage() {
 
                           {/* 平台信息 */}
                           <div className="space-y-1 text-xs text-gray-500">
-                            {platform.type === 'easystack' && platform.auth_url && (
+                            {platform.type === 'easystack' && platform.host_ip && (
+                              <p className="truncate">
+                                <span className="text-gray-400">IP: </span>{platform.host_ip}
+                                {platform.base_domain && <span className="text-gray-400 ml-2">域: {platform.base_domain}</span>}
+                              </p>
+                            )}
+                            {platform.type === 'easystack' && !platform.host_ip && platform.auth_url && (
                               <p className="truncate">
                                 <span className="text-gray-400">URL: </span>{platform.auth_url}
                               </p>

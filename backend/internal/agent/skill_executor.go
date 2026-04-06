@@ -21,9 +21,9 @@ import (
 // SkillExecutor authenticates to a cloud platform and executes tool calls.
 // It caches tokens per platform ID to avoid re-authenticating on every call.
 type SkillExecutor struct {
-	mu         sync.RWMutex
-	tokens     map[uint]*platformToken // keyed by CloudPlatform.ID
-	httpClient *http.Client
+	mu          sync.RWMutex
+	tokens      map[uint]*platformToken // keyed by CloudPlatform.ID
+	httpClients map[uint]*http.Client   // per-platform HTTP client (with custom DNS)
 }
 
 type platformToken struct {
@@ -36,9 +36,28 @@ type platformToken struct {
 // NewSkillExecutor creates a new executor.
 func NewSkillExecutor() *SkillExecutor {
 	return &SkillExecutor{
-		tokens:     make(map[uint]*platformToken),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		tokens:      make(map[uint]*platformToken),
+		httpClients: make(map[uint]*http.Client),
 	}
+}
+
+// getHTTPClient returns a cached HTTP client for the platform.
+// If the platform has HostIP+BaseDomain, the client uses custom DNS resolution.
+func (se *SkillExecutor) getHTTPClient(p model.CloudPlatform) *http.Client {
+	se.mu.RLock()
+	if c, ok := se.httpClients[p.ID]; ok {
+		se.mu.RUnlock()
+		return c
+	}
+	se.mu.RUnlock()
+
+	client := NewHTTPClientWithCustomDNS(p.HostIP, p.BaseDomain, 30*time.Second)
+
+	se.mu.Lock()
+	se.httpClients[p.ID] = client
+	se.mu.Unlock()
+
+	return client
 }
 
 // Authenticate obtains a valid token for the given cloud platform.
@@ -105,7 +124,9 @@ func (se *SkillExecutor) authenticateEasyStack(p model.CloudPlatform) (string, e
 		},
 	}
 	body, _ := json.Marshal(authReq)
-	url := fmt.Sprintf("%s/v3/auth/tokens", strings.TrimRight(p.AuthURL, "/"))
+	// Resolve Keystone URL: prefer HostIP+BaseDomain, fall back to AuthURL
+	endpoints := ResolveEasyStackEndpoints(p)
+	url := fmt.Sprintf("%s/v3/auth/tokens", strings.TrimRight(endpoints.Keystone, "/"))
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
@@ -113,7 +134,8 @@ func (se *SkillExecutor) authenticateEasyStack(p model.CloudPlatform) (string, e
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := se.httpClient.Do(req)
+	httpClient := se.getHTTPClient(p)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("network error: %w", err)
 	}
@@ -153,7 +175,8 @@ func (se *SkillExecutor) authenticateZStack(p model.CloudPlatform) (string, erro
 	req.Header.Set("Date", ts)
 	req.Header.Set("Authorization", fmt.Sprintf("ZStack %s:%s", p.AccessKeyID, sig))
 
-	resp, err := se.httpClient.Do(req)
+	httpClient := se.getHTTPClient(p)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("network error: %w", err)
 	}
@@ -214,9 +237,15 @@ func (se *SkillExecutor) ExecuteTool(platform model.CloudPlatform, toolName stri
 }
 
 // executeEasyStack runs a tool against an EasyStack (OpenStack) cloud platform.
+// It resolves service endpoints per tool: compute→Nova, monitoring→EMLA, storage→Cinder, etc.
 func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName string, params map[string]interface{}, getString func(string) string, getInt func(string) int) (string, error) {
-	baseURL := strings.TrimRight(p.AuthURL, "/")
+	// Resolve per-service endpoints from HostIP + BaseDomain (or fallback to AuthURL)
+	endpoints := ResolveEasyStackEndpoints(p)
+	serviceURL := endpoints.ServiceURLFor(toolName)
 	projectID := p.ProjectID
+	httpClient := se.getHTTPClient(p)
+
+	logger.Log.Infof("[EasyStack] Tool '%s' → service URL: %s", toolName, serviceURL)
 
 	doReq := func(method, url string, body interface{}) (json.RawMessage, error) {
 		var reqBody io.Reader
@@ -233,7 +262,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		if projectID != "" {
 			req.Header.Set("X-Project-Id", projectID)
 		}
-		resp, err := se.httpClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -251,11 +280,11 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 	switch toolName {
 	// Compute
 	case "list_servers":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.1/%s/servers/detail", baseURL, projectID), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.1/%s/servers/detail", serviceURL, projectID), nil)
 	case "get_server":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.1/%s/servers/%s", baseURL, projectID, getString("server_id")), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.1/%s/servers/%s", serviceURL, projectID, getString("server_id")), nil)
 	case "create_server":
-		result, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers", baseURL, projectID), map[string]interface{}{
+		result, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers", serviceURL, projectID), map[string]interface{}{
 			"server": map[string]interface{}{
 				"name": getString("name"), "flavorRef": getString("flavor_id"),
 				"networks": []map[string]string{{"uuid": getString("network_id")}},
@@ -266,13 +295,13 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			},
 		})
 	case "start_server":
-		_, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers/%s/action", baseURL, projectID, getString("server_id")),
+		_, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers/%s/action", serviceURL, projectID, getString("server_id")),
 			map[string]interface{}{"os-start": nil})
 		if err == nil {
 			return `{"status":"success","message":"云主机启动命令已发送"}`, nil
 		}
 	case "stop_server":
-		_, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers/%s/action", baseURL, projectID, getString("server_id")),
+		_, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers/%s/action", serviceURL, projectID, getString("server_id")),
 			map[string]interface{}{"os-stop": nil})
 		if err == nil {
 			return `{"status":"success","message":"云主机关闭命令已发送"}`, nil
@@ -282,52 +311,52 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		if rt == "" {
 			rt = "SOFT"
 		}
-		_, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers/%s/action", baseURL, projectID, getString("server_id")),
+		_, err = doReq("POST", fmt.Sprintf("%s/v2.1/%s/servers/%s/action", serviceURL, projectID, getString("server_id")),
 			map[string]interface{}{"reboot": map[string]string{"type": rt}})
 		if err == nil {
 			return `{"status":"success","message":"云主机重启命令已发送"}`, nil
 		}
 	case "delete_server":
-		_, err = doReq("DELETE", fmt.Sprintf("%s/v2.1/%s/servers/%s", baseURL, projectID, getString("server_id")), nil)
+		_, err = doReq("DELETE", fmt.Sprintf("%s/v2.1/%s/servers/%s", serviceURL, projectID, getString("server_id")), nil)
 		if err == nil {
 			return `{"status":"success","message":"云主机删除命令已发送"}`, nil
 		}
 	case "list_flavors":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.1/%s/flavors/detail", baseURL, projectID), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.1/%s/flavors/detail", serviceURL, projectID), nil)
 	case "list_images":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/images", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/images", serviceURL), nil)
 	// Storage
 	case "list_volumes":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail", baseURL, projectID), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail", serviceURL, projectID), nil)
 	case "create_volume":
 		volParams := map[string]interface{}{"name": getString("name"), "size": getInt("size")}
-		result, err = doReq("POST", fmt.Sprintf("%s/v2/%s/volumes", baseURL, projectID), map[string]interface{}{"volume": volParams})
+		result, err = doReq("POST", fmt.Sprintf("%s/v2/%s/volumes", serviceURL, projectID), map[string]interface{}{"volume": volParams})
 	case "delete_volume":
-		_, err = doReq("DELETE", fmt.Sprintf("%s/v2/%s/volumes/%s", baseURL, projectID, getString("volume_id")), nil)
+		_, err = doReq("DELETE", fmt.Sprintf("%s/v2/%s/volumes/%s", serviceURL, projectID, getString("volume_id")), nil)
 		if err == nil {
 			return `{"status":"success","message":"云硬盘删除命令已发送"}`, nil
 		}
 	case "extend_volume":
-		_, err = doReq("POST", fmt.Sprintf("%s/v3/%s/volumes/%s/action", baseURL, projectID, getString("volume_id")),
+		_, err = doReq("POST", fmt.Sprintf("%s/v3/%s/volumes/%s/action", serviceURL, projectID, getString("volume_id")),
 			map[string]interface{}{"os-extend": map[string]int{"new_size": getInt("new_size")}})
 		if err == nil {
 			return `{"status":"success","message":"云硬盘扩容命令已发送"}`, nil
 		}
 	case "list_volume_snapshots":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/snapshots/detail", baseURL, projectID), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/snapshots/detail", serviceURL, projectID), nil)
 	// Network
 	case "list_networks":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/networks", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/networks", serviceURL), nil)
 	case "list_subnets":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/subnets", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/subnets", serviceURL), nil)
 	case "list_routers":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/routers", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/routers", serviceURL), nil)
 	case "list_floating_ips":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/floatingips", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/floatingips", serviceURL), nil)
 	case "list_security_groups":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/security-groups", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/security-groups", serviceURL), nil)
 	case "create_security_group":
-		result, err = doReq("POST", fmt.Sprintf("%s/v2.0/security-groups", baseURL),
+		result, err = doReq("POST", fmt.Sprintf("%s/v2.0/security-groups", serviceURL),
 			map[string]interface{}{"security_group": map[string]string{"name": getString("name"), "description": getString("description")}})
 	case "create_security_group_rule":
 		ruleParams := map[string]interface{}{"security_group_id": getString("security_group_id"), "direction": getString("direction")}
@@ -340,15 +369,15 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		if max := getInt("port_range_max"); max > 0 {
 			ruleParams["port_range_max"] = max
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/v2.0/security-group-rules", baseURL),
+		result, err = doReq("POST", fmt.Sprintf("%s/v2.0/security-group-rules", serviceURL),
 			map[string]interface{}{"security_group_rule": ruleParams})
 	// LB
 	case "list_loadbalancers":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/loadbalancers", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/loadbalancers", serviceURL), nil)
 	case "list_listeners":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/listeners", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/listeners", serviceURL), nil)
 	case "list_pools":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/pools", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/pools", serviceURL), nil)
 	// Monitoring
 	case "query_metrics":
 		start := int64(getInt("start"))
@@ -363,10 +392,10 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		if step == 0 {
 			step = 60
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query", baseURL, projectID),
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query", serviceURL, projectID),
 			map[string]interface{}{"expr": getString("expr"), "start": start, "end": end, "step": step})
 	case "list_alerts":
-		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true", baseURL, projectID)
+		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true", serviceURL, projectID)
 		if s := getString("states"); s != "" {
 			alertURL += "&states=" + s
 		}
@@ -379,7 +408,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 
 	// -- Active alarms (firing) --
 	case "list_active_alerts":
-		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true&states=firing", baseURL, projectID)
+		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true&states=firing", serviceURL, projectID)
 		if s := getString("severities"); s != "" {
 			alertURL += "&severities=" + s
 		}
@@ -390,7 +419,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 
 	// -- Recovered alarms (resolved) --
 	case "list_recovered_alerts":
-		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true&states=resolved", baseURL, projectID)
+		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true&states=resolved", serviceURL, projectID)
 		if s := getString("severities"); s != "" {
 			alertURL += "&severities=" + s
 		}
@@ -407,7 +436,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 
 	// -- Alarm severity summary (critical/warning/info counts) --
 	case "get_alarm_severity_summary":
-		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true", baseURL, projectID)
+		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true", serviceURL, projectID)
 		result, err = doReq("GET", alertURL, nil)
 		if err == nil && result != nil {
 			// Parse and extract severity statistics
@@ -462,7 +491,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			"metrics_filter": metricsFilter,
 			"time":           time.Now().Unix(),
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", baseURL), metricsReq)
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", serviceURL), metricsReq)
 
 	// -- Storage cluster status --
 	case "get_storage_cluster_status":
@@ -485,7 +514,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			"metrics_filter": storageMetrics,
 			"time":           time.Now().Unix(),
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/storage/metrics/query", baseURL), metricsReq)
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/storage/metrics/query", serviceURL), metricsReq)
 
 	// -- Dashboard overview metrics (VM state, CPU, memory, storage, top5) --
 	case "get_dashboard_overview":
@@ -505,7 +534,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			"metrics_filter": dashMetrics,
 			"time":           time.Now().Unix(),
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query", baseURL, projectID), metricsReq)
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query", serviceURL, projectID), metricsReq)
 
 	// -- Query metrics range (PromQL with time range) --
 	case "query_metrics_range":
@@ -521,7 +550,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		if step == 0 {
 			step = 60
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query_range", baseURL, projectID),
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query_range", serviceURL, projectID),
 			map[string]interface{}{"expr": getString("expr"), "start": start, "end": end, "step": step})
 
 	// -- All cloud service health check (comprehensive) --
@@ -559,7 +588,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			"metrics_filter": allServiceMetrics,
 			"time":           time.Now().Unix(),
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", baseURL), metricsReq)
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", serviceURL), metricsReq)
 
 	// ==================== Metering Service Tools (ECF 6.2.1 Chapter 14) ====================
 
@@ -569,7 +598,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		if metric == "" {
 			metric = "cpu.util"
 		}
-		top5URL := fmt.Sprintf("%s/v2/extension/resources/top5/%s", baseURL, metric)
+		top5URL := fmt.Sprintf("%s/v2/extension/resources/top5/%s", serviceURL, metric)
 		if s := getString("start"); s != "" {
 			top5URL += "?start=" + s
 		}
@@ -599,20 +628,20 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			stopTime = time.Now().UTC().Format("2006-01-02T15:04:05")
 		}
 		metricURL := fmt.Sprintf("%s/v2/extension/metric_data/%s/start/%s/stop/%s/granularity/%s/resource/%s",
-			baseURL, metricName, startTime, stopTime, granularity, resourceID)
+			serviceURL, metricName, startTime, stopTime, granularity, resourceID)
 		result, err = doReq("GET", metricURL, nil)
 
 	// -- Virtual resource alarms (Ceilometer-style) --
 	case "list_resource_alarms":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms", baseURL), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms", serviceURL), nil)
 
 	// -- Get specific alarm details --
 	case "get_resource_alarm":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms/%s", baseURL, getString("alarm_id")), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms/%s", serviceURL, getString("alarm_id")), nil)
 
 	// -- Alarm history --
 	case "get_alarm_history":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms/%s/history", baseURL, getString("alarm_id")), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms/%s/history", serviceURL, getString("alarm_id")), nil)
 
 	default:
 		return fmt.Sprintf(`{"error":"unknown tool: %s"}`, toolName), nil
@@ -635,6 +664,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 // executeZStack runs a tool against a ZStack cloud platform.
 func (se *SkillExecutor) executeZStack(p model.CloudPlatform, sessionID, toolName string, params map[string]interface{}, getString func(string) string, getInt func(string) int) (string, error) {
 	endpoint := strings.TrimRight(p.Endpoint, "/")
+	httpClient := se.getHTTPClient(p)
 
 	doZStackQuery := func(apiPath string, conditions []map[string]interface{}) (json.RawMessage, error) {
 		url := fmt.Sprintf("%s%s", endpoint, apiPath)
@@ -649,7 +679,7 @@ func (se *SkillExecutor) executeZStack(p model.CloudPlatform, sessionID, toolNam
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", fmt.Sprintf("OAuth %s", sessionID))
-		resp, err := se.httpClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return nil, err
 		}

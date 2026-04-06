@@ -153,12 +153,15 @@ type CloudPlatform struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 	Name        string         `gorm:"size:128;not null" json:"name"`           // Platform display name
 	Type        string         `gorm:"size:32;not null" json:"type"`            // easystack / zstack
-	AuthURL     string         `gorm:"size:512" json:"auth_url"`               // Keystone auth URL (EasyStack)
+	AuthURL     string         `gorm:"size:512" json:"auth_url"`               // Keystone auth URL (EasyStack) - legacy, auto-generated from HostIP+BaseDomain
 	Username    string         `gorm:"size:128" json:"username"`               // Username
 	Password    string         `gorm:"size:256" json:"-"`                      // Password (not returned)
 	DomainName  string         `gorm:"size:128" json:"domain_name"`            // Domain (EasyStack)
 	ProjectName string         `gorm:"size:128" json:"project_name"`           // Project name (EasyStack)
 	ProjectID   string         `gorm:"size:128" json:"project_id"`             // Project ID
+	// EasyStack service discovery fields
+	HostIP     string `gorm:"size:64" json:"host_ip"`      // Cloud platform IP, e.g. 192.168.3.204
+	BaseDomain string `gorm:"size:256" json:"base_domain"` // Root domain, e.g. opsl2.svc.cluster.local
 	// ZStack specific fields
 	AccessKeyID     string `gorm:"size:256" json:"access_key_id"`      // ZStack AK
 	AccessKeySecret string `gorm:"size:512" json:"-"`                  // ZStack SK (not returned)
