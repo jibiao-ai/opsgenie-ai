@@ -626,6 +626,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 	}
 	resultStr := string(result)
 	if len(resultStr) > 8000 {
+		logger.Log.Warnf("[SkillExecutor] Tool '%s' result truncated: %d bytes → 8000 bytes. Data loss may cause inaccurate AI responses.", toolName, len(resultStr))
 		resultStr = resultStr[:8000] + "...(truncated)"
 	}
 	return resultStr, nil

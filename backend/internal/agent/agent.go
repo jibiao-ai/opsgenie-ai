@@ -106,7 +106,15 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 	// Build system prompt with cloud platform context
 	systemPrompt := agentModel.SystemPrompt
 	if platform != nil {
-		systemPrompt += fmt.Sprintf("\n\n[系统信息] 你当前连接的云平台是 \"%s\" (类型: %s)。当用户询问云资源相关问题时，你应该调用工具函数获取真实数据来回答。", platform.Name, platform.Type)
+		systemPrompt += fmt.Sprintf("\n\n[系统信息] 你当前连接的云平台是 \"%s\" (类型: %s)。"+
+			"当用户询问云资源相关问题时，你**必须**调用工具函数获取真实数据来回答。"+
+			"\n\n[严格数据规范] "+
+			"1. 你**禁止**编造、推测或凭记忆生成任何云平台数据（告警数量、服务状态、资源指标等）。"+
+			"2. 所有数据**必须且只能**来源于工具调用的返回结果。"+
+			"3. 如果工具返回了N条数据，你的回答中必须严格展示N条，不能多也不能少。"+
+			"4. 如果工具调用失败或返回为空，你必须明确告知用户『数据获取失败』，而不是编造数据。"+
+			"5. 在输出数据前，请先核对工具返回的原始数据条目数量，确保你的汇总与原始数据一致。",
+			platform.Name, platform.Type)
 	}
 	if len(skills) > 0 {
 		skillNames := make([]string, len(skills))
@@ -132,12 +140,19 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 		modelName = agentModel.Model
 	}
 
-	logger.Log.Infof("Chat: model=%s, skills=%d, tools=%d, platform=%v",
-		modelName, len(skills), len(tools), platform != nil)
-
 	supportsTools := a.providerSupportsTools(baseURL)
 	supportsStream := a.providerSupportsStream(baseURL)
 	isSiliconFlow := a.isSiliconFlowProvider(baseURL)
+
+	logger.Log.Infof("Chat: agent='%s', model=%s, skills=%d, tools=%d, platform=%v, supportsTools=%v, baseURL=%s",
+		agentModel.Name, modelName, len(skills), len(tools), platform != nil, supportsTools, baseURL)
+
+	// IMPORTANT: If the provider does NOT support tool calling but we have tools,
+	// warn loudly because the agent will not be able to call real cloud APIs.
+	if !supportsTools && len(tools) > 0 {
+		logger.Log.Warnf("WARNING: AI provider at '%s' does NOT support tool calling! Agent '%s' has %d tools but they will NOT be sent. LLM may hallucinate data instead of calling real APIs.",
+			baseURL, agentModel.Name, len(tools))
+	}
 
 	// Loop for tool calling
 	for iterations := 0; iterations < 10; iterations++ {
@@ -205,7 +220,7 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 			})
 
 			for _, tc := range choice.Message.ToolCalls {
-				logger.Log.Infof("Executing tool: %s args: %s", tc.Function.Name, tc.Function.Arguments)
+				logger.Log.Infof("[ToolCall] Executing tool: %s, id: %s, args: %s", tc.Function.Name, tc.ID, tc.Function.Arguments)
 
 				var toolResult string
 				if platform != nil {
@@ -213,6 +228,14 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 					toolResult, err = a.SkillExecutor.ExecuteTool(*platform, tc.Function.Name, json.RawMessage(tc.Function.Arguments))
 					if err != nil {
 						toolResult = fmt.Sprintf(`{"error":"tool execution failed: %s"}`, err.Error())
+						logger.Log.Errorf("[ToolCall] Tool '%s' execution FAILED: %v", tc.Function.Name, err)
+					} else {
+						// Log result size and preview for debugging data accuracy
+						preview := toolResult
+						if len(preview) > 500 {
+							preview = preview[:500] + "..."
+						}
+						logger.Log.Infof("[ToolCall] Tool '%s' SUCCESS, result_size=%d bytes, preview: %s", tc.Function.Name, len(toolResult), preview)
 					}
 				} else {
 					toolResult = `{"error":"当前智能体未绑定云平台，无法执行云资源操作。请在智能体管理中关联一个云平台。"}`
@@ -229,6 +252,11 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 		}
 
 		// No tool calls, return the final response
+		if iterations == 0 && len(tools) > 0 {
+			logger.Log.Warnf("[Chat] LLM returned final answer on FIRST iteration without calling ANY tools. Agent '%s' has %d tools available. The response may contain hallucinated data.",
+				agentModel.Name, len(tools))
+		}
+		logger.Log.Infof("[Chat] Final response at iteration %d, content_length=%d", iterations, len(choice.Message.Content))
 		content := choice.Message.Content
 		if callback != nil {
 			callback(content, true)
