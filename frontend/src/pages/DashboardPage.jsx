@@ -97,7 +97,7 @@ export default function DashboardPage() {
       page: 'ai-models',
     },
     {
-      label: '接入云平台',
+      label: '接入平台',
       desc: '添加 EasyStack / ZStack',
       icon: Cloud,
       iconBg: 'bg-emerald-50',

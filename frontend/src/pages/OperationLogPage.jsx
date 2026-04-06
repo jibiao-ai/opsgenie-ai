@@ -268,7 +268,7 @@ export default function OperationLogPage() {
                         <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
                         <p className="text-sm">暂无操作日志</p>
                         <p className="text-xs mt-1 text-gray-300">
-                          新建用户、接入云平台、管理智能体等操作将记录在此
+                          新建用户、接入平台、管理智能体等操作将记录在此
                         </p>
                       </td>
                     </tr>

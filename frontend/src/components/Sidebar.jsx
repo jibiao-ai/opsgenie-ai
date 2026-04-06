@@ -32,7 +32,7 @@ const menuGroups = [
   {
     label: '资源管理',
     items: [
-      { id: 'cloud-platforms', label: '接入云平台', icon: Cloud },
+      { id: 'cloud-platforms', label: '接入平台', icon: Cloud },
       { id: 'resource-monitor', label: '资源监控', icon: Activity },
     ],
   },
@@ -40,7 +40,7 @@ const menuGroups = [
     label: '配置管理',
     items: [
       { id: 'ai-models', label: '模型配置', icon: Cpu },
-      { id: 'skills', label: '技能中心', icon: Zap },
+      { id: 'skills', label: '技能商店', icon: Zap },
       { id: 'workflows', label: '工作流', icon: Workflow },
       { id: 'scheduled-tasks', label: '定时任务', icon: Clock },
     ],

@@ -158,7 +158,7 @@ function PlatformModal({ open, onClose, onSaved, editPlatform }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800">
-            {isEdit ? '编辑云平台' : '接入云平台'}
+            {isEdit ? '编辑平台' : '接入平台'}
           </h2>
           <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 rounded">
             <X className="w-5 h-5" />

@@ -273,7 +273,7 @@ export default function ResourceMonitorPage() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-gray-400 mt-1 ml-3.5">实时监控所有接入云平台的资源状态和告警信息</p>
+            <p className="text-sm text-gray-400 mt-1 ml-3.5">实时监控所有接入平台的资源状态和告警信息</p>
           </div>
           <div className="flex items-center gap-3">
             {/* Live clock */}
@@ -508,13 +508,13 @@ export default function ResourceMonitorPage() {
                     <Cloud className="w-7 h-7 text-blue-300" />
                   </div>
                   <p className="text-sm font-medium text-gray-600 mb-1">暂无云平台</p>
-                  <p className="text-xs text-gray-400 mb-4">请先接入云平台以查看资源数据</p>
+                  <p className="text-xs text-gray-400 mb-4">请先接入平台以查看资源数据</p>
                   <button
                     onClick={() => setActivePage('cloud-platforms')}
                     className="text-sm font-medium px-4 py-2 rounded-lg text-white transition-colors"
                     style={{ background: '#513CC8' }}
                   >
-                    接入云平台
+                    接入平台
                   </button>
                 </div>
               )}
@@ -688,7 +688,7 @@ export default function ResourceMonitorPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
             {
-              title: '接入云平台',
+              title: '接入平台',
               desc: '管理 EasyStack、ZStack 等多云接入',
               icon: Cloud,
               page: 'cloud-platforms',

@@ -54,7 +54,7 @@ export default function SkillsPage() {
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="px-6 py-4 flex items-center justify-between">
             <div>
-              <h1 className="text-lg font-semibold text-gray-800">技能中心</h1>
+              <h1 className="text-lg font-semibold text-gray-800">技能商店</h1>
               <p className="text-sm text-gray-400 mt-0.5">管理智能体可调用的云平台 API 技能，通过 Function Calling 赋能智能体</p>
             </div>
           </div>
