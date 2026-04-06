@@ -32,6 +32,33 @@ func NewHandler(chatService *service.ChatService) *Handler {
 	return &Handler{chatService: chatService}
 }
 
+// ==================== Operation Log Helper ====================
+
+// recordOperationLog persists an operation log entry. It is fire-and-forget;
+// errors are logged but do not affect the calling handler's response.
+func recordOperationLog(c *gin.Context, module, action string, targetID uint, targetName, detail string) {
+	userID := c.GetUint("user_id")
+	username := ""
+	var user model.User
+	if err := repository.DB.Select("username").First(&user, userID).Error; err == nil {
+		username = user.Username
+	}
+	ip := c.ClientIP()
+	log := model.OperationLog{
+		UserID:     userID,
+		Username:   username,
+		Module:     module,
+		Action:     action,
+		TargetID:   targetID,
+		TargetName: targetName,
+		Detail:     detail,
+		IP:         ip,
+	}
+	if err := repository.DB.Create(&log).Error; err != nil {
+		logger.Log.Warnf("Failed to record operation log: %v", err)
+	}
+}
+
 // ==================== Auth ====================
 
 func (h *Handler) Login(c *gin.Context) {
@@ -104,6 +131,9 @@ func (h *Handler) CreateAgent(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "agent", "create", agent.ID, agent.Name,
+		fmt.Sprintf("新建智能体: %s, 模型: %s", agent.Name, agent.Model))
 	response.Success(c, agent)
 }
 
@@ -159,15 +189,27 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "agent", "update", agent.ID, agent.Name,
+		fmt.Sprintf("更新智能体: %s", agent.Name))
 	response.Success(c, agent)
 }
 
 func (h *Handler) DeleteAgent(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	// Fetch agent info before deletion for logging
+	agentInfo, _ := h.chatService.GetAgent(uint(id))
 	if err := h.chatService.DeleteAgent(uint(id)); err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Record operation log
+	agentName := ""
+	if agentInfo != nil {
+		agentName = agentInfo.Name
+	}
+	recordOperationLog(c, "agent", "delete", uint(id), agentName,
+		fmt.Sprintf("删除智能体: %s", agentName))
 	response.Success(c, nil)
 }
 
@@ -563,6 +605,9 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "user", "create", user.ID, user.Username,
+		fmt.Sprintf("新建用户: %s, 角色: %s", user.Username, user.Role))
 	// Clear password hash from response
 	user.Password = ""
 	response.Success(c, user)
@@ -591,6 +636,9 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "user", "update", user.ID, user.Username,
+		fmt.Sprintf("更新用户: %s", user.Username))
 	// Clear password hash from response
 	user.Password = ""
 	response.Success(c, user)
@@ -598,10 +646,16 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 
 func (h *Handler) DeleteUser(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	// Fetch user info before deletion for logging
+	var delUser model.User
+	repository.DB.Unscoped().Select("username").First(&delUser, id)
 	if err := service.DeleteUser(uint(id)); err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "user", "delete", uint(id), delUser.Username,
+		fmt.Sprintf("删除用户: %s", delUser.Username))
 	response.Success(c, nil)
 }
 
@@ -615,6 +669,49 @@ func (h *Handler) ListTaskLogs(c *gin.Context) {
 		return
 	}
 	response.Success(c, logs)
+}
+
+// ==================== Operation Logs ====================
+
+// ListOperationLogs returns operation log entries with optional filtering.
+// Supports query params: module, action, page, page_size
+func (h *Handler) ListOperationLogs(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	moduleFilter := c.Query("module")
+	actionFilter := c.Query("action")
+
+	query := repository.DB.Model(&model.OperationLog{})
+	if moduleFilter != "" {
+		query = query.Where("module = ?", moduleFilter)
+	}
+	if actionFilter != "" {
+		query = query.Where("action = ?", actionFilter)
+	}
+
+	var total int64
+	query.Count(&total)
+
+	var logs []model.OperationLog
+	offset := (page - 1) * pageSize
+	if err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&logs).Error; err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+		"items":     logs,
+	})
 }
 
 // ==================== AI Providers ====================
@@ -1474,6 +1571,9 @@ func (h *Handler) CreateCloudPlatform(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "cloud_platform", "create", platform.ID, platform.Name,
+		fmt.Sprintf("接入云平台: %s, 类型: %s", platform.Name, platform.Type))
 	response.Success(c, platform)
 }
 
@@ -1547,16 +1647,25 @@ func (h *Handler) UpdateCloudPlatform(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "cloud_platform", "update", platform.ID, platform.Name,
+		fmt.Sprintf("更新云平台: %s", platform.Name))
 	response.Success(c, platform)
 }
 
 // DeleteCloudPlatform soft-deletes a cloud platform
 func (h *Handler) DeleteCloudPlatform(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	// Fetch platform info before deletion for logging
+	var delPlatform model.CloudPlatform
+	repository.DB.Unscoped().Select("name", "type").First(&delPlatform, id)
 	if err := repository.DB.Delete(&model.CloudPlatform{}, id).Error; err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Record operation log
+	recordOperationLog(c, "cloud_platform", "delete", uint(id), delPlatform.Name,
+		fmt.Sprintf("删除云平台: %s (%s)", delPlatform.Name, delPlatform.Type))
 	response.Success(c, nil)
 }
 

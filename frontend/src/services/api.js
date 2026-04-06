@@ -105,4 +105,7 @@ export const updateCloudPlatform = (id, data) => api.put(`/cloud-platforms/${id}
 export const deleteCloudPlatform = (id) => api.delete(`/cloud-platforms/${id}`);
 export const testCloudPlatform = (id) => api.post(`/cloud-platforms/${id}/test`);
 
+// Operation Logs (Admin)
+export const getOperationLogs = (params) => api.get('/operation-logs', { params });
+
 export default api;

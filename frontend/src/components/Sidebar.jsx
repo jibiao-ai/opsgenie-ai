@@ -14,6 +14,7 @@ import {
   Cloud,
   Activity,
   ChevronRight,
+  FileText,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import { useNavigate } from 'react-router-dom';
@@ -50,6 +51,7 @@ const adminGroup = {
   label: '系统管理',
   items: [
     { id: 'users', label: '用户管理', icon: Users },
+    { id: 'operation-logs', label: '操作日志', icon: FileText },
   ],
 };
 
