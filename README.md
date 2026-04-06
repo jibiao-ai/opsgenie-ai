@@ -49,6 +49,9 @@
 git clone <repo-url>
 cd cloud-agent
 
+# 生成自签名 TLS 证书（首次部署执行一次即可）
+./init-ssl.sh
+
 # 启动所有服务（MySQL + RabbitMQ + Backend + Frontend）
 docker compose up -d
 
@@ -59,7 +62,17 @@ docker compose ps
 docker compose logs -f backend
 ```
 
-访问地址：http://localhost （或服务器 IP）
+访问地址：**https://localhost**（或服务器 IP）
+> HTTP (80) 会自动 301 跳转到 HTTPS (443)。
+
+#### HTTPS / TLS 证书说明
+
+| 场景 | 操作 |
+|------|------|
+| **开发/测试** | 运行 `./init-ssl.sh` 自动生成自签名证书到 `ssl/` 目录（10 年有效期） |
+| **生产环境** | 将 CA 签发的 `server.crt` + `server.key` 放入 `ssl/` 目录，或修改 `docker-compose.yml` 的 volumes 挂载路径 |
+| **Let's Encrypt** | 使用 `certbot` 或 `acme.sh` 签发免费证书，将 fullchain + privkey 复制到 `ssl/` |
+| **自定义域名** | `DOMAIN=your.domain.com ./init-ssl.sh` 可指定 CN/SAN |
 
 ### 本地开发模式
 

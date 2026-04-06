@@ -112,7 +112,9 @@ services:
     networks:
       - cloud-agent-net
 
-  # React Frontend (Nginx - serves static files and proxies /api to backend)
+  # React Frontend (Nginx — HTTPS on 443, HTTP 80 redirects to HTTPS)
+  # Before first run: ./init-ssl.sh   (generates self-signed certs in ./ssl/)
+  # For production: replace ./ssl/server.{crt,key} with CA-signed certificates.
   frontend:
     build:
       context: ./frontend
@@ -121,7 +123,11 @@ services:
     container_name: cloud-agent-frontend
     restart: unless-stopped
     ports:
+      - "0.0.0.0:443:443"
       - "0.0.0.0:80:80"
+    volumes:
+      # TLS certificates — generate with ./init-ssl.sh or mount your own
+      - ./ssl:/etc/nginx/ssl:ro
     depends_on:
       - backend
     networks:
