@@ -49,7 +49,7 @@ export default function SkillsPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-5xl">
+      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 w-full">
         {/* Header */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="px-6 py-4 flex items-center justify-between">
@@ -72,7 +72,7 @@ export default function SkillsPage() {
               <p className="text-sm">暂无技能数据</p>
             </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {skills.map((skill) => {
                 let config = {};
                 try { config = JSON.parse(skill.config || '{}'); } catch {}

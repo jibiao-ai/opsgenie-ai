@@ -270,7 +270,7 @@ export default function AIModelsPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-6xl">
+      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 w-full">
 
         {/* 页面卡片 */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
@@ -467,7 +467,7 @@ export default function AIModelsPage() {
                 {/* 厂商选择网格 */}
                 <div>
                   <h3 className="text-sm font-semibold text-gray-700 mb-3">选择 AI 提供商</h3>
-                  <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
                     {providers.map((provider) => {
                       const meta = getProviderMeta(provider.name);
                       const isSelected = addSelected === provider.name;
@@ -628,7 +628,7 @@ export default function AIModelsPage() {
 
             {/* === 连通测试 Tab === */}
             {activeTab === 'test' && (
-              <div className="max-w-xl space-y-5">
+              <div className="space-y-5">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">选择测试模型</label>
                   <select

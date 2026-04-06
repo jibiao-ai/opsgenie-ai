@@ -119,10 +119,10 @@ export default function DashboardPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-7xl">
+      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 w-full">
 
         {/* === 顶部 4 个统计卡片 === */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {statCards.map((card, i) => {
             const Icon = card.icon;
             return (
@@ -160,7 +160,7 @@ export default function DashboardPage() {
         </div>
 
         {/* === 中间区域：最近对话 + 快捷操作 === */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
 
           {/* 最近对话列表（占 2/3） */}
           <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm">
@@ -281,7 +281,7 @@ export default function DashboardPage() {
               系统正常
             </span>
           </div>
-          <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             {[
               { label: 'AI 服务', desc: '模型接口正常', icon: Cpu, ok: true },
               { label: '对话服务', desc: '实时消息正常', icon: MessageSquare, ok: true },

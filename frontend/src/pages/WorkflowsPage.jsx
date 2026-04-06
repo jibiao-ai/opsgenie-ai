@@ -37,7 +37,7 @@ export default function WorkflowsPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-5xl">
+      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 w-full">
         {/* 页面头部卡片 */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="px-6 py-4 flex items-center justify-between">
@@ -58,7 +58,7 @@ export default function WorkflowsPage() {
               <Loader2 className="w-6 h-6 animate-spin text-[#513CC8]" />
             </div>
           ) : (
-            <div className="grid gap-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {allWorkflows.map((wf) => (
                 <div key={wf.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between">

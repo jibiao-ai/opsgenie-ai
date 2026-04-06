@@ -270,7 +270,7 @@ export default function UsersPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-5xl">
+      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 w-full">
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
 
           {/* 卡片头：搜索 + 新增按钮 */}
@@ -314,7 +314,7 @@ export default function UsersPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[640px]">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
                     <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">用户</th>
