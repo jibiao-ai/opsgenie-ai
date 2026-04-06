@@ -374,6 +374,246 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			alertURL += "&severities=" + s
 		}
 		result, err = doReq("GET", alertURL, nil)
+
+	// ==================== Monitoring Alarm Skill Tools (ECF 6.2.1 Observability) ====================
+
+	// -- Active alarms (firing) --
+	case "list_active_alerts":
+		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true&states=firing", baseURL, projectID)
+		if s := getString("severities"); s != "" {
+			alertURL += "&severities=" + s
+		}
+		if s := getString("categories"); s != "" {
+			alertURL += "&categories=" + s
+		}
+		result, err = doReq("GET", alertURL, nil)
+
+	// -- Recovered alarms (resolved) --
+	case "list_recovered_alerts":
+		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true&states=resolved", baseURL, projectID)
+		if s := getString("severities"); s != "" {
+			alertURL += "&severities=" + s
+		}
+		if s := getString("categories"); s != "" {
+			alertURL += "&categories=" + s
+		}
+		if s := getString("start"); s != "" {
+			alertURL += "&start=" + s
+		}
+		if s := getString("end"); s != "" {
+			alertURL += "&end=" + s
+		}
+		result, err = doReq("GET", alertURL, nil)
+
+	// -- Alarm severity summary (critical/warning/info counts) --
+	case "get_alarm_severity_summary":
+		alertURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true", baseURL, projectID)
+		result, err = doReq("GET", alertURL, nil)
+		if err == nil && result != nil {
+			// Parse and extract severity statistics
+			var alertResp struct {
+				Code int `json:"code"`
+				Data struct {
+					Statistics struct {
+						Total    int `json:"total"`
+						Critical int `json:"critical"`
+						Warning  int `json:"warning"`
+						Info     int `json:"info"`
+					} `json:"statistics"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(result, &alertResp) == nil {
+				summary := map[string]interface{}{
+					"total":    alertResp.Data.Statistics.Total,
+					"critical": alertResp.Data.Statistics.Critical,
+					"warning":  alertResp.Data.Statistics.Warning,
+					"info":     alertResp.Data.Statistics.Info,
+				}
+				summaryJSON, _ := json.Marshal(summary)
+				result = summaryJSON
+			}
+		}
+
+	// -- Control plane service status (40+ service_*_state metrics) --
+	case "get_control_plane_status":
+		metricsFilter := []string{
+			"service_control_api_state",
+			"service_compute_api_state",
+			"service_compute_conductor_state",
+			"service_compute_scheduler_state",
+			"service_network_api_state",
+			"service_network_dhcp_state",
+			"service_network_l3_state",
+			"service_network_metadata_state",
+			"service_network_lb_state",
+			"service_storage_api_state",
+			"service_storage_scheduler_state",
+			"service_storage_volume_state",
+			"service_image_api_state",
+			"service_identity_api_state",
+			"service_monitoring_api_state",
+			"service_database_state",
+			"service_mq_state",
+			"service_orchestration_api_state",
+			"service_baremetal_api_state",
+			"service_container_api_state",
+		}
+		metricsReq := map[string]interface{}{
+			"metrics_filter": metricsFilter,
+			"time":           time.Now().Unix(),
+		}
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", baseURL), metricsReq)
+
+	// -- Storage cluster status --
+	case "get_storage_cluster_status":
+		storageMetrics := []string{
+			"storage_health_status",
+			"ceph_mon_quorum_status",
+			"storage_osd_total",
+			"storage_osd_up",
+			"storage_osd_down",
+			"storage_actual_capacity_total_bytes",
+			"storage_actual_capacity_free_bytes",
+			"storage_actual_capacity_used_bytes",
+			"storage_user_data_pool_bytes",
+			"storage_cluster_iops_read",
+			"storage_cluster_iops_write",
+			"storage_cluster_throughput_read",
+			"storage_cluster_throughput_write",
+		}
+		metricsReq := map[string]interface{}{
+			"metrics_filter": storageMetrics,
+			"time":           time.Now().Unix(),
+		}
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/storage/metrics/query", baseURL), metricsReq)
+
+	// -- Dashboard overview metrics (VM state, CPU, memory, storage, top5) --
+	case "get_dashboard_overview":
+		dashMetrics := []string{
+			"dashboard_instances_state",
+			"dashboard_instances_vcpu_usage",
+			"dashboard_cpu_total",
+			"dashboard_cpu_used",
+			"dashboard_memory_total",
+			"dashboard_memory_usage",
+			"dashboard_storage_total",
+			"dashboard_storage_used",
+			"dashboard_cache_disk_total",
+			"dashboard_cache_disk_used",
+		}
+		metricsReq := map[string]interface{}{
+			"metrics_filter": dashMetrics,
+			"time":           time.Now().Unix(),
+		}
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query", baseURL, projectID), metricsReq)
+
+	// -- Query metrics range (PromQL with time range) --
+	case "query_metrics_range":
+		start := int64(getInt("start"))
+		end := int64(getInt("end"))
+		step := int64(getInt("step"))
+		if start == 0 {
+			start = time.Now().Add(-1 * time.Hour).Unix()
+		}
+		if end == 0 {
+			end = time.Now().Unix()
+		}
+		if step == 0 {
+			step = 60
+		}
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query_range", baseURL, projectID),
+			map[string]interface{}{"expr": getString("expr"), "start": start, "end": end, "step": step})
+
+	// -- All cloud service health check (comprehensive) --
+	case "check_all_services_health":
+		// Query all known service state metrics from the control plane
+		allServiceMetrics := []string{
+			"service_control_api_state",
+			"service_compute_api_state",
+			"service_compute_conductor_state",
+			"service_compute_scheduler_state",
+			"service_network_api_state",
+			"service_network_dhcp_state",
+			"service_network_l3_state",
+			"service_network_metadata_state",
+			"service_network_lb_state",
+			"service_storage_api_state",
+			"service_storage_scheduler_state",
+			"service_storage_volume_state",
+			"service_image_api_state",
+			"service_identity_api_state",
+			"service_monitoring_api_state",
+			"service_database_state",
+			"service_mq_state",
+			"service_orchestration_api_state",
+			"service_baremetal_api_state",
+			"service_container_api_state",
+			"service_billing_api_state",
+			"service_object_storage_api_state",
+			"service_dns_api_state",
+			"service_vpn_api_state",
+			"service_firewall_api_state",
+			"service_key_manager_api_state",
+		}
+		metricsReq := map[string]interface{}{
+			"metrics_filter": allServiceMetrics,
+			"time":           time.Now().Unix(),
+		}
+		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", baseURL), metricsReq)
+
+	// ==================== Metering Service Tools (ECF 6.2.1 Chapter 14) ====================
+
+	// -- Top-5 resource usage (cpu.util / memory.util) --
+	case "get_resource_top5":
+		metric := getString("metric")
+		if metric == "" {
+			metric = "cpu.util"
+		}
+		top5URL := fmt.Sprintf("%s/v2/extension/resources/top5/%s", baseURL, metric)
+		if s := getString("start"); s != "" {
+			top5URL += "?start=" + s
+		}
+		if s := getString("end"); s != "" {
+			if strings.Contains(top5URL, "?") {
+				top5URL += "&end=" + s
+			} else {
+				top5URL += "?end=" + s
+			}
+		}
+		result, err = doReq("GET", top5URL, nil)
+
+	// -- Resource monitoring data (time-series for a specific resource + metric) --
+	case "get_resource_metric_data":
+		resourceID := getString("resource_id")
+		metricName := getString("metric_name")
+		startTime := getString("start_time")
+		stopTime := getString("stop_time")
+		granularity := getString("granularity")
+		if granularity == "" {
+			granularity = "300"
+		}
+		if startTime == "" {
+			startTime = time.Now().Add(-1 * time.Hour).UTC().Format("2006-01-02T15:04:05")
+		}
+		if stopTime == "" {
+			stopTime = time.Now().UTC().Format("2006-01-02T15:04:05")
+		}
+		metricURL := fmt.Sprintf("%s/v2/extension/metric_data/%s/start/%s/stop/%s/granularity/%s/resource/%s",
+			baseURL, metricName, startTime, stopTime, granularity, resourceID)
+		result, err = doReq("GET", metricURL, nil)
+
+	// -- Virtual resource alarms (Ceilometer-style) --
+	case "list_resource_alarms":
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms", baseURL), nil)
+
+	// -- Get specific alarm details --
+	case "get_resource_alarm":
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms/%s", baseURL, getString("alarm_id")), nil)
+
+	// -- Alarm history --
+	case "get_alarm_history":
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/alarms/%s/history", baseURL, getString("alarm_id")), nil)
+
 	default:
 		return fmt.Sprintf(`{"error":"unknown tool: %s"}`, toolName), nil
 	}

@@ -433,4 +433,181 @@ func seedDefaultData(db *gorm.DB) {
 			logger.Log.Infof("Associated %d skills with agent '%s'", len(allSkills), firstAgent.Name)
 		}
 	}
+
+	// Seed the "监控告警" (Monitoring Alarm) skill — idempotent insert by name
+	seedMonitoringAlarmSkill(db)
+
+	// Seed the "可观测员工" (Observable Employee) agent — idempotent insert by name
+	seedObservableEmployeeAgent(db)
+}
+
+// seedMonitoringAlarmSkill creates the comprehensive monitoring alarm skill
+// based on ECF 6.2.1 Observability (Ch.15) and Metering (Ch.14) APIs.
+// It wraps: active alarms, recovered alarms, alarm severity, control plane status,
+// storage cluster status, dashboard overview, metrics range query, service health check,
+// resource top5, resource metric data, resource alarms, and alarm history.
+func seedMonitoringAlarmSkill(db *gorm.DB) {
+	const skillName = "监控告警(可观测)"
+
+	var existing model.Skill
+	if err := db.Where("name = ?", skillName).First(&existing).Error; err == nil {
+		// Already exists — update ToolDefs to latest version
+		existing.ToolDefs = monitoringAlarmToolDefs
+		existing.Description = "EasyStack ECF 6.2.1 可观测与计量服务完整技能包：活跃告警、已恢复告警、告警等级统计、" +
+			"控制面服务状态、存储集群状态、监控大盘概览、PromQL时序查询、全平台服务健康检查、" +
+			"资源TOP5用量、资源监控数据、虚拟资源告警、告警历史"
+		existing.Config = `{"service":"observability+metering","api_version":"v1+v2","domains":["emla.opsl2.svc.cluster.local","keystone.opsl2.svc.cluster.local"]}`
+		db.Save(&existing)
+		logger.Log.Infof("Updated monitoring alarm skill '%s'", skillName)
+		return
+	}
+
+	skill := model.Skill{
+		Name: skillName,
+		Description: "EasyStack ECF 6.2.1 可观测与计量服务完整技能包：活跃告警、已恢复告警、告警等级统计、" +
+			"控制面服务状态、存储集群状态、监控大盘概览、PromQL时序查询、全平台服务健康检查、" +
+			"资源TOP5用量、资源监控数据、虚拟资源告警、告警历史",
+		Type:     "cloud_api",
+		Config:   `{"service":"observability+metering","api_version":"v1+v2","domains":["emla.opsl2.svc.cluster.local","keystone.opsl2.svc.cluster.local"]}`,
+		ToolDefs: monitoringAlarmToolDefs,
+		IsActive: true,
+	}
+	db.Create(&skill)
+	logger.Log.Infof("Created monitoring alarm skill '%s' (ID=%d)", skillName, skill.ID)
+}
+
+// monitoringAlarmToolDefs is the JSON array of OpenAI-compatible tool definitions
+// for the monitoring alarm skill, covering all ECF 6.2.1 observability + metering APIs.
+const monitoringAlarmToolDefs = `[
+{"type":"function","function":{"name":"list_active_alerts","description":"查询当前所有活跃(firing)告警，可按严重等级和分类过滤","parameters":{"type":"object","properties":{"severities":{"type":"string","description":"告警严重等级过滤，可选: critical, warning, info，多个用逗号分隔"},"categories":{"type":"string","description":"告警分类过滤，可选: service, storage, host, logging，多个用逗号分隔"}}}}},
+{"type":"function","function":{"name":"list_recovered_alerts","description":"查询已恢复(resolved)的告警，支持时间范围和等级过滤","parameters":{"type":"object","properties":{"severities":{"type":"string","description":"告警严重等级过滤"},"categories":{"type":"string","description":"告警分类过滤"},"start":{"type":"string","description":"开始时间(Unix时间戳或ISO格式)"},"end":{"type":"string","description":"结束时间(Unix时间戳或ISO格式)"}}}}},
+{"type":"function","function":{"name":"get_alarm_severity_summary","description":"获取告警等级统计摘要：critical/warning/info各有多少条告警","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"get_control_plane_status","description":"查询控制面所有云服务状态（计算、网络、存储、镜像、认证、监控、数据库、消息队列等20+服务的运行状态）","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"get_storage_cluster_status","description":"查询存储集群健康状态：Ceph健康、OSD数量与状态、容量、IOPS、吞吐量等","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"get_dashboard_overview","description":"获取监控大盘概览数据：云主机状态、CPU/内存/存储总量与使用率","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"query_metrics","description":"使用PromQL查询监控指标数据（即时查询）","parameters":{"type":"object","properties":{"expr":{"type":"string","description":"PromQL查询表达式，例如: up, node_cpu_seconds_total"},"start":{"type":"integer","description":"开始时间(Unix时间戳)"},"end":{"type":"integer","description":"结束时间(Unix时间戳)"},"step":{"type":"integer","description":"采样步长(秒)"}},"required":["expr"]}}},
+{"type":"function","function":{"name":"query_metrics_range","description":"使用PromQL查询监控指标时间范围数据（范围查询，返回时序数据点）","parameters":{"type":"object","properties":{"expr":{"type":"string","description":"PromQL查询表达式"},"start":{"type":"integer","description":"开始时间(Unix时间戳)"},"end":{"type":"integer","description":"结束时间(Unix时间戳)"},"step":{"type":"integer","description":"采样步长(秒)"}},"required":["expr"]}}},
+{"type":"function","function":{"name":"check_all_services_health","description":"全面检查所有云平台服务的健康状态（26+服务），返回每个服务的运行/告警/停止状态","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"get_resource_top5","description":"获取资源使用率TOP5（CPU或内存），返回使用率最高的5个资源","parameters":{"type":"object","properties":{"metric":{"type":"string","description":"指标名称: cpu.util 或 memory.util","enum":["cpu.util","memory.util"]},"start":{"type":"string","description":"开始时间"},"end":{"type":"string","description":"结束时间"}}}}},
+{"type":"function","function":{"name":"get_resource_metric_data","description":"查询指定资源的监控时序数据（CPU利用率、内存、网络流量、磁盘IO等）","parameters":{"type":"object","properties":{"resource_id":{"type":"string","description":"资源ID（云主机ID等）"},"metric_name":{"type":"string","description":"指标名称，例如: cpu.util, memory.util, network.incoming.bytes.rate, disk.read.bytes.rate"},"start_time":{"type":"string","description":"开始时间(UTC格式: 2006-01-02T15:04:05)"},"stop_time":{"type":"string","description":"结束时间(UTC格式)"},"granularity":{"type":"string","description":"采样粒度(秒)，默认300"}},"required":["resource_id","metric_name"]}}},
+{"type":"function","function":{"name":"list_resource_alarms","description":"列举所有虚拟资源告警规则（Ceilometer告警）","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"get_resource_alarm","description":"查询指定虚拟资源告警规则的详细信息","parameters":{"type":"object","properties":{"alarm_id":{"type":"string","description":"告警规则ID"}},"required":["alarm_id"]}}},
+{"type":"function","function":{"name":"get_alarm_history","description":"查询指定告警规则的历史变更记录","parameters":{"type":"object","properties":{"alarm_id":{"type":"string","description":"告警规则ID"}},"required":["alarm_id"]}}},
+{"type":"function","function":{"name":"list_alerts","description":"查询告警信息（通用），支持状态和等级过滤","parameters":{"type":"object","properties":{"states":{"type":"string","description":"告警状态过滤(firing/resolved)"},"severities":{"type":"string","description":"严重等级过滤(critical/warning/info)"}}}}}
+]`
+
+// seedObservableEmployeeAgent creates the "可观测员工" (Observable Employee) agent
+// and associates it with the monitoring alarm skill and the first available EasyStack platform.
+// This agent follows the Eino ReAct pattern: observe → think → act using tool calls.
+func seedObservableEmployeeAgent(db *gorm.DB) {
+	const agentName = "可观测员工"
+
+	var existing model.Agent
+	if err := db.Where("name = ?", agentName).First(&existing).Error; err == nil {
+		// Already exists — update system prompt to latest version
+		existing.SystemPrompt = observableEmployeeSystemPrompt()
+		existing.Description = "基于 Eino ReAct 模式的可观测智能体，专注于 EasyStack 云平台的监控告警、服务健康检查、" +
+			"存储集群状态、资源使用率分析。自动关联监控告警(可观测)技能并绑定 EasyStack 平台。"
+		db.Save(&existing)
+		logger.Log.Infof("Updated observable employee agent '%s'", agentName)
+
+		// Ensure monitoring alarm skill association
+		ensureObservableAgentSkillAssociation(db, existing.ID)
+		return
+	}
+
+	// Find the first active EasyStack platform to bind
+	var platform model.CloudPlatform
+	var platformID *uint
+	if err := db.Where("type = ? AND is_active = ?", "easystack", true).First(&platform).Error; err == nil {
+		platformID = &platform.ID
+	}
+
+	agent := model.Agent{
+		Name: agentName,
+		Description: "基于 Eino ReAct 模式的可观测智能体，专注于 EasyStack 云平台的监控告警、服务健康检查、" +
+			"存储集群状态、资源使用率分析。自动关联监控告警(可观测)技能并绑定 EasyStack 平台。",
+		SystemPrompt:    observableEmployeeSystemPrompt(),
+		Model:           "gpt-4",
+		Temperature:     0.2,
+		MaxTokens:       8192,
+		CloudPlatformID: platformID,
+		IsActive:        true,
+		CreatedBy:       1,
+	}
+	db.Create(&agent)
+	logger.Log.Infof("Created observable employee agent '%s' (ID=%d)", agentName, agent.ID)
+
+	// Associate monitoring alarm skill
+	ensureObservableAgentSkillAssociation(db, agent.ID)
+}
+
+// ensureObservableAgentSkillAssociation links the "监控告警(可观测)" skill to the agent.
+func ensureObservableAgentSkillAssociation(db *gorm.DB, agentID uint) {
+	var skill model.Skill
+	if err := db.Where("name = ?", "监控告警(可观测)").First(&skill).Error; err != nil {
+		logger.Log.Warnf("Monitoring alarm skill not found, cannot associate with agent %d", agentID)
+		return
+	}
+
+	// Check if association already exists
+	var existing model.AgentSkill
+	if err := db.Where("agent_id = ? AND skill_id = ?", agentID, skill.ID).First(&existing).Error; err != nil {
+		// Create association
+		db.Create(&model.AgentSkill{AgentID: agentID, SkillID: skill.ID})
+		logger.Log.Infof("Associated monitoring alarm skill (ID=%d) with agent (ID=%d)", skill.ID, agentID)
+	}
+}
+
+// observableEmployeeSystemPrompt returns the comprehensive system prompt for the observable employee agent.
+func observableEmployeeSystemPrompt() string {
+	return "你是「可观测员工」——一个专业的 EasyStack 云平台可观测性与监控告警智能体。\n\n" +
+		"## 角色定义\n" +
+		"你是团队中负责云平台可观测性(Observability)的专职员工，基于 Eino ReAct（Observe-Think-Act）智能体模式运行：\n" +
+		"1. **Observe（观察）**：通过工具调用采集实时告警、服务状态、监控指标等数据\n" +
+		"2. **Think（思考）**：分析数据，判断问题根因、影响范围和紧急程度\n" +
+		"3. **Act（行动）**：输出结构化的分析报告，提供处置建议\n\n" +
+		"## 核心能力\n" +
+		"### 1. 告警监控\n" +
+		"- 查询活跃告警（firing）：按严重等级(critical/warning/info)和分类(service/storage/host/logging)过滤\n" +
+		"- 查询已恢复告警（resolved）：支持时间范围查询\n" +
+		"- 告警等级统计：快速了解各等级告警数量分布\n\n" +
+		"### 2. 服务健康检查\n" +
+		"- 控制面服务状态：检查计算(Nova)、网络(Neutron)、存储(Cinder)、镜像(Glance)、认证(Keystone)、监控(ECMS)等 20+ 服务的运行状态\n" +
+		"- 全平台服务健康检查：26+ 服务的综合健康巡检\n" +
+		"- 存储集群状态：Ceph 健康状态、OSD 数量、容量使用、IOPS、吞吐量\n\n" +
+		"### 3. 指标查询与分析\n" +
+		"- 监控大盘概览：云主机状态、CPU/内存/存储使用率\n" +
+		"- PromQL 即时查询和范围查询\n" +
+		"- 资源 TOP5 使用率排行（CPU/内存）\n" +
+		"- 单资源时序监控数据查询\n\n" +
+		"### 4. 虚拟资源告警\n" +
+		"- Ceilometer 告警规则列表与详情\n" +
+		"- 告警历史变更记录查询\n\n" +
+		"## 连接的云平台\n" +
+		"- **认证服务(Keystone)域名**: keystone.opsl2.svc.cluster.local\n" +
+		"- **监控服务(EMLA)域名**: emla.opsl2.svc.cluster.local\n" +
+		"- **平台类型**: EasyStack ECF 6.2.1\n\n" +
+		"## 工作流程（ReAct 模式）\n" +
+		"当用户提出请求时，按以下步骤执行：\n\n" +
+		"**Step 1 - 理解需求**：分析用户问题，确定需要查询哪些数据\n" +
+		"**Step 2 - 数据采集**：调用对应的工具函数获取实时数据\n" +
+		"**Step 3 - 分析诊断**：对采集到的数据进行分析，识别异常、趋势和关联\n" +
+		"**Step 4 - 输出报告**：用清晰的中文给出分析结果，包括：\n" +
+		"  - 当前状态摘要\n" +
+		"  - 发现的问题及严重程度\n" +
+		"  - 可能的根因分析\n" +
+		"  - 建议的处置措施\n\n" +
+		"## 输出格式规范\n" +
+		"- 使用 Markdown 格式组织输出\n" +
+		"- 告警信息按严重等级排序：Critical > Warning > Info\n" +
+		"- 服务状态使用状态标记：正常 | 异常 | 停止\n" +
+		"- 数值类指标带单位（%, GB, IOPS, MB/s）\n" +
+		"- 时间统一使用本地时间格式\n\n" +
+		"## 注意事项\n" +
+		"- 优先关注 critical 级别告警\n" +
+		"- 发现服务不可用时立即提醒用户\n" +
+		"- 对于存储集群容量不足(<20%)需特别告警\n" +
+		"- 分析时结合多维度数据进行交叉验证\n" +
+		"- 如果数据查询失败，说明可能原因并建议手动检查"
 }
