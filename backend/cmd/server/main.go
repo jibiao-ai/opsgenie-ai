@@ -158,6 +158,7 @@ func main() {
 				admin.POST("/users", h.CreateUser)
 				admin.PUT("/users/:id", h.UpdateUser)
 				admin.DELETE("/users/:id", h.DeleteUser)
+				admin.GET("/operation-logs", h.ListOperationLogs)
 			}
 		}
 	}

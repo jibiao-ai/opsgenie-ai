@@ -155,6 +155,21 @@ type CloudPlatform struct {
 	CreatedBy   uint           `json:"created_by"`
 }
 
+// OperationLog records admin operations such as creating users, connecting cloud platforms, and managing agents
+type OperationLog struct {
+	ID         uint           `gorm:"primarykey" json:"id"`
+	CreatedAt  time.Time      `json:"created_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	UserID     uint           `gorm:"index" json:"user_id"`
+	Username   string         `gorm:"size:64" json:"username"`
+	Module     string         `gorm:"size:32;index" json:"module"`          // user, cloud_platform, agent
+	Action     string         `gorm:"size:32" json:"action"`                // create, update, delete
+	TargetID   uint           `json:"target_id"`
+	TargetName string         `gorm:"size:128" json:"target_name"`
+	Detail     string         `gorm:"type:text" json:"detail"`
+	IP         string         `gorm:"size:64" json:"ip"`
+}
+
 // AIProvider stores AI provider configurations (OpenAI, DeepSeek, Qwen, GLM, MiniMax, etc.)
 type AIProvider struct {
 	ID          uint           `gorm:"primarykey" json:"id"`

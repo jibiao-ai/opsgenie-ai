@@ -76,6 +76,7 @@ func InitDB(cfg config.DatabaseConfig) error {
 		&model.EasyStackEndpoint{},
 		&model.AIProvider{},
 		&model.CloudPlatform{},
+		&model.OperationLog{},
 	)
 	if err != nil {
 		return fmt.Errorf("auto migration failed: %w", err)
