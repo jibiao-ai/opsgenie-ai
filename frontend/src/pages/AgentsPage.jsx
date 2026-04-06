@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, Plus, Edit2, Trash2, CheckCircle, XCircle, X, Loader2, Cpu, Thermometer, Hash, MessageSquare } from 'lucide-react';
-import { getAgents, createAgent, updateAgent, deleteAgent, getAIProviders } from '../services/api';
+import { Bot, Plus, Edit2, Trash2, CheckCircle, XCircle, X, Loader2, Cpu, Thermometer, Hash, MessageSquare, Zap, Cloud, Link2 } from 'lucide-react';
+import { getAgents, createAgent, updateAgent, deleteAgent, getAIProviders, getSkills, getCloudPlatforms } from '../services/api';
 import toast from 'react-hot-toast';
 
 export default function AgentsPage() {
@@ -11,36 +11,49 @@ export default function AgentsPage() {
   const [form, setForm] = useState({
     name: '', description: '', system_prompt: '', model: '',
     temperature: 0.7, max_tokens: 4096, is_active: true,
+    skill_ids: [], cloud_platform_id: null,
   });
   const [availableModels, setAvailableModels] = useState([]);
+  const [allSkills, setAllSkills] = useState([]);
+  const [cloudPlatforms, setCloudPlatforms] = useState([]);
 
-  useEffect(() => { loadAgents(); loadModels(); }, []);
+  useEffect(() => {
+    loadAgents();
+    loadModels();
+    loadSkills();
+    loadCloudPlatforms();
+  }, []);
 
   const loadModels = async () => {
     try {
       const res = await getAIProviders();
       if (res.code === 0 && res.data) {
-        // Show all configured & enabled providers
         const models = res.data
           .filter((p) => p.is_enabled && p.configured)
           .map((p) => ({
-            name: p.name,
-            label: p.label,
-            model: p.model,
-            is_default: p.is_default,
+            name: p.name, label: p.label, model: p.model, is_default: p.is_default,
           }));
         setAvailableModels(models);
-        // Set default model for the form if not already set
         if (!form.model) {
           const defaultModel = models.find((m) => m.is_default) || models[0];
-          if (defaultModel) {
-            setForm((prev) => ({ ...prev, model: defaultModel.model }));
-          }
+          if (defaultModel) setForm((prev) => ({ ...prev, model: defaultModel.model }));
         }
       }
-    } catch (err) {
-      console.error('Failed to load AI models:', err);
-    }
+    } catch (err) { console.error('Failed to load AI models:', err); }
+  };
+
+  const loadSkills = async () => {
+    try {
+      const res = await getSkills();
+      if (res.code === 0) setAllSkills(res.data || []);
+    } catch (err) { console.error('Failed to load skills:', err); }
+  };
+
+  const loadCloudPlatforms = async () => {
+    try {
+      const res = await getCloudPlatforms();
+      if (res.code === 0) setCloudPlatforms(res.data || []);
+    } catch (err) { console.error('Failed to load cloud platforms:', err); }
   };
 
   const loadAgents = async () => {
@@ -62,6 +75,8 @@ export default function AgentsPage() {
         temperature: parseFloat(form.temperature) || 0.7,
         max_tokens: parseInt(form.max_tokens) || 4096,
         is_active: form.is_active,
+        skill_ids: form.skill_ids,
+        cloud_platform_id: form.cloud_platform_id || null,
       };
       if (editAgent) {
         await updateAgent(editAgent.id, payload);
@@ -89,6 +104,8 @@ export default function AgentsPage() {
 
   const handleEdit = (agent) => {
     setEditAgent(agent);
+    // Extract skill IDs from agent_skills association
+    const skillIds = (agent.agent_skills || []).map((as) => as.skill_id || as.skill?.id).filter(Boolean);
     setForm({
       name: agent.name || '',
       description: agent.description || '',
@@ -97,6 +114,8 @@ export default function AgentsPage() {
       temperature: agent.temperature ?? 0.7,
       max_tokens: agent.max_tokens ?? 4096,
       is_active: agent.is_active !== false,
+      skill_ids: skillIds,
+      cloud_platform_id: agent.cloud_platform_id || null,
     });
     setShowForm(true);
   };
@@ -105,36 +124,63 @@ export default function AgentsPage() {
     setShowForm(false);
     setEditAgent(null);
     const defaultModel = availableModels.find((m) => m.is_default) || availableModels[0];
-    setForm({ name: '', description: '', system_prompt: '', model: defaultModel?.model || '', temperature: 0.7, max_tokens: 4096, is_active: true });
+    setForm({
+      name: '', description: '', system_prompt: '', model: defaultModel?.model || '',
+      temperature: 0.7, max_tokens: 4096, is_active: true, skill_ids: [], cloud_platform_id: null,
+    });
   };
 
-  // Find the provider label for a given model name
+  const toggleSkill = (skillId) => {
+    setForm((prev) => ({
+      ...prev,
+      skill_ids: prev.skill_ids.includes(skillId)
+        ? prev.skill_ids.filter((id) => id !== skillId)
+        : [...prev.skill_ids, skillId],
+    }));
+  };
+
   const getModelProviderLabel = (modelName) => {
     if (!modelName) return '未设置';
     const provider = availableModels.find(m => m.model === modelName);
     return provider ? `${provider.label} (${modelName})` : modelName;
   };
 
+  // Get skill names for an agent's associations
+  const getAgentSkillNames = (agent) => {
+    if (!agent.agent_skills || agent.agent_skills.length === 0) return [];
+    return agent.agent_skills
+      .map((as) => as.skill?.name || allSkills.find((s) => s.id === as.skill_id)?.name)
+      .filter(Boolean);
+  };
+
+  // Get cloud platform name
+  const getAgentPlatformName = (agent) => {
+    if (agent.cloud_platform) return agent.cloud_platform.name;
+    if (agent.cloud_platform_id) {
+      const p = cloudPlatforms.find((cp) => cp.id === agent.cloud_platform_id);
+      return p?.name || `ID:${agent.cloud_platform_id}`;
+    }
+    return null;
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-6 space-y-6 max-w-5xl">
-        {/* 页面头部卡片 */}
+        {/* Header */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="px-6 py-4 flex items-center justify-between">
             <div>
               <h1 className="text-lg font-semibold text-gray-800">智能体管理</h1>
-              <p className="text-sm text-gray-400 mt-0.5">配置和管理 AI 运维智能体</p>
+              <p className="text-sm text-gray-400 mt-0.5">配置和管理 AI 运维智能体，关联技能与云平台</p>
             </div>
-            <button
-              onClick={() => { resetForm(); setShowForm(true); }}
-              className="flex items-center gap-2 bg-[#513CC8] hover:bg-[#4230A6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
+            <button onClick={() => { resetForm(); setShowForm(true); }}
+              className="flex items-center gap-2 bg-[#513CC8] hover:bg-[#4230A6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
               <Plus className="w-4 h-4" /> 新建智能体
             </button>
           </div>
         </div>
 
-        {/* 新建/编辑表单卡片 */}
+        {/* Create / Edit form */}
         {showForm && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -147,7 +193,7 @@ export default function AgentsPage() {
             </div>
             <div className="p-6">
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* 名称 */}
+                {/* Name */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1.5">
                     <span className="flex items-center gap-1.5"><Bot className="w-3.5 h-3.5" />名称</span>
@@ -157,7 +203,7 @@ export default function AgentsPage() {
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#513CC8] outline-none" required />
                 </div>
 
-                {/* 模型厂商 / 模型选择 */}
+                {/* Model */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1.5">
                     <span className="flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" />模型厂商 / 模型</span>
@@ -177,14 +223,9 @@ export default function AgentsPage() {
                       暂无已配置的模型，请先前往「模型配置」页面添加
                     </div>
                   )}
-                  {form.model && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      当前选择: {getModelProviderLabel(form.model)}
-                    </p>
-                  )}
                 </div>
 
-                {/* 描述 */}
+                {/* Description */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1.5">描述</label>
                   <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
@@ -192,7 +233,7 @@ export default function AgentsPage() {
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#513CC8] outline-none" />
                 </div>
 
-                {/* 系统提示词 */}
+                {/* System Prompt */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1.5">
                     <span className="flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" />系统提示词</span>
@@ -202,7 +243,64 @@ export default function AgentsPage() {
                     rows={6} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#513CC8] outline-none resize-none" />
                 </div>
 
-                {/* 温度参数 / 最大令牌数 */}
+                {/* Skill Association */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1.5">
+                    <span className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" />关联技能</span>
+                  </label>
+                  {allSkills.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {allSkills.map((skill) => {
+                        const isSelected = form.skill_ids.includes(skill.id);
+                        return (
+                          <button
+                            key={skill.id}
+                            type="button"
+                            onClick={() => toggleSkill(skill.id)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border transition-all ${
+                              isSelected
+                                ? 'bg-[#EEE9FB] border-[#513CC8] text-[#513CC8] font-medium'
+                                : 'bg-white border-gray-200 text-gray-500 hover:border-[#513CC8] hover:text-[#513CC8]'
+                            }`}
+                          >
+                            <Zap className="w-3.5 h-3.5" />
+                            {skill.name}
+                            {isSelected && <CheckCircle className="w-3.5 h-3.5" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400">暂无可用技能</p>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">
+                    选择技能后，智能体在对话中可通过 Function Calling 调用相应的云平台 API
+                  </p>
+                </div>
+
+                {/* Cloud Platform Binding */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1.5">
+                    <span className="flex items-center gap-1.5"><Cloud className="w-3.5 h-3.5" />绑定云平台</span>
+                  </label>
+                  <select
+                    value={form.cloud_platform_id || ''}
+                    onChange={(e) => setForm({ ...form, cloud_platform_id: e.target.value ? parseInt(e.target.value) : null })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#513CC8] outline-none bg-white"
+                  >
+                    <option value="">-- 自动选择（使用首个已连接平台）--</option>
+                    {cloudPlatforms.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.type}) {p.status === 'connected' ? '✓ 已连接' : p.status === 'failed' ? '✕ 连接失败' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    绑定云平台后，智能体执行技能时将通过该平台的 Token 认证进行 API 调用
+                  </p>
+                </div>
+
+                {/* Temperature / Max Tokens */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-600 mb-1.5">
@@ -211,7 +309,7 @@ export default function AgentsPage() {
                     <input type="number" step="0.1" min="0" max="2" value={form.temperature}
                       onChange={(e) => setForm({ ...form, temperature: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#513CC8] outline-none" />
-                    <p className="text-xs text-gray-400 mt-1">值越大回答越随机，推荐 0.1-0.5 用于精确任务，0.7-1.0 用于创意任务</p>
+                    <p className="text-xs text-gray-400 mt-1">值越大回答越随机，推荐 0.1-0.5 用于精确任务</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-600 mb-1.5">
@@ -224,7 +322,7 @@ export default function AgentsPage() {
                   </div>
                 </div>
 
-                {/* 启用/停用开关 */}
+                {/* Active toggle */}
                 <div className="flex items-center gap-3">
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" checked={form.is_active}
@@ -235,7 +333,7 @@ export default function AgentsPage() {
                   <span className="text-sm text-gray-600">{form.is_active ? '已启用' : '已停用'}</span>
                 </div>
 
-                {/* 提交按钮 */}
+                {/* Submit */}
                 <div className="flex gap-3 pt-2">
                   <button type="submit"
                     className="bg-[#513CC8] hover:bg-[#4230A6] text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors">
@@ -251,7 +349,7 @@ export default function AgentsPage() {
           </div>
         )}
 
-        {/* 智能体列表卡片 */}
+        {/* Agent List */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
           {loading ? (
             <div className="flex items-center justify-center h-40">
@@ -264,61 +362,80 @@ export default function AgentsPage() {
             </div>
           ) : (
             <div className="grid gap-4">
-              {agents.map((agent) => (
-                <div key={agent.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 bg-[#EEE9FB] rounded-lg flex items-center justify-center mt-0.5">
-                        <Bot className="w-5 h-5 text-[#513CC8]" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-semibold text-gray-800">{agent.name}</h3>
-                          <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded">#{agent.id}</span>
-                          {agent.is_active ? (
-                            <span className="flex items-center gap-1 text-xs text-green-600"><CheckCircle className="w-3 h-3" />活跃</span>
-                          ) : (
-                            <span className="flex items-center gap-1 text-xs text-gray-400"><XCircle className="w-3 h-3" />停用</span>
+              {agents.map((agent) => {
+                const skillNames = getAgentSkillNames(agent);
+                const platformName = getAgentPlatformName(agent);
+                return (
+                  <div key={agent.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 bg-[#EEE9FB] rounded-lg flex items-center justify-center mt-0.5">
+                          <Bot className="w-5 h-5 text-[#513CC8]" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-gray-800">{agent.name}</h3>
+                            <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded">#{agent.id}</span>
+                            {agent.is_active ? (
+                              <span className="flex items-center gap-1 text-xs text-green-600"><CheckCircle className="w-3 h-3" />活跃</span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-xs text-gray-400"><XCircle className="w-3 h-3" />停用</span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-500 mt-1">{agent.description}</p>
+                          <div className="flex gap-4 mt-2 text-xs text-gray-400 flex-wrap">
+                            <span className="flex items-center gap-1">
+                              <Cpu className="w-3 h-3" /> 模型: {agent.model || '未设置'}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Thermometer className="w-3 h-3" /> 温度: {agent.temperature ?? '-'}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Hash className="w-3 h-3" /> 最大令牌: {agent.max_tokens ?? '-'}
+                            </span>
+                          </div>
+
+                          {/* Skill and Platform tags */}
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {skillNames.map((name, i) => (
+                              <span key={i} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full border border-purple-100">
+                                <Zap className="w-3 h-3" />{name}
+                              </span>
+                            ))}
+                            {platformName && (
+                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-100">
+                                <Cloud className="w-3 h-3" />{platformName}
+                              </span>
+                            )}
+                            {skillNames.length === 0 && !platformName && (
+                              <span className="text-xs text-gray-300">未关联技能或云平台</span>
+                            )}
+                          </div>
+
+                          {agent.system_prompt && (
+                            <div className="mt-2 text-xs text-gray-400 bg-gray-50 rounded px-2 py-1 max-h-16 overflow-hidden">
+                              <span className="font-medium">提示词: </span>
+                              {agent.system_prompt.length > 100 ? agent.system_prompt.slice(0, 100) + '...' : agent.system_prompt}
+                            </div>
                           )}
                         </div>
-                        <p className="text-sm text-gray-500 mt-1">{agent.description}</p>
-                        <div className="flex gap-4 mt-2 text-xs text-gray-400 flex-wrap">
-                          <span className="flex items-center gap-1">
-                            <Cpu className="w-3 h-3" />
-                            模型: {agent.model || '未设置'}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Thermometer className="w-3 h-3" />
-                            温度: {agent.temperature ?? '-'}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Hash className="w-3 h-3" />
-                            最大令牌: {agent.max_tokens ?? '-'}
-                          </span>
-                        </div>
-                        {agent.system_prompt && (
-                          <div className="mt-2 text-xs text-gray-400 bg-gray-50 rounded px-2 py-1 max-h-16 overflow-hidden">
-                            <span className="font-medium">提示词: </span>
-                            {agent.system_prompt.length > 100 ? agent.system_prompt.slice(0, 100) + '...' : agent.system_prompt}
-                          </div>
-                        )}
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0 ml-2">
+                        <button onClick={() => handleEdit(agent)}
+                          title="编辑智能体"
+                          className="p-1.5 text-gray-400 hover:text-[#513CC8] hover:bg-[#EEE9FB] rounded-lg transition-colors">
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleDelete(agent.id)}
+                          title="删除智能体"
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex gap-1 flex-shrink-0 ml-2">
-                      <button onClick={() => handleEdit(agent)}
-                        title="编辑智能体"
-                        className="p-1.5 text-gray-400 hover:text-[#513CC8] hover:bg-[#EEE9FB] rounded-lg transition-colors">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => handleDelete(agent.id)}
-                        title="删除智能体"
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

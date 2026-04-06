@@ -21,19 +21,23 @@ type User struct {
 
 // Agent represents an AI agent configuration
 type Agent struct {
-	ID          uint           `gorm:"primarykey" json:"id"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
-	Name        string         `gorm:"size:128;not null" json:"name"`
-	Description string         `gorm:"type:text" json:"description"`
-	SystemPrompt string        `gorm:"type:text" json:"system_prompt"`
-	Model       string         `gorm:"size:64" json:"model"`
-	Temperature float64        `gorm:"default:0.7" json:"temperature"`
-	MaxTokens   int            `gorm:"default:4096" json:"max_tokens"`
-	Skills      string         `gorm:"type:text" json:"skills"` // JSON array of skill IDs
-	IsActive    bool           `gorm:"default:true" json:"is_active"`
-	CreatedBy   uint           `json:"created_by"`
+	ID             uint           `gorm:"primarykey" json:"id"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	Name           string         `gorm:"size:128;not null" json:"name"`
+	Description    string         `gorm:"type:text" json:"description"`
+	SystemPrompt   string         `gorm:"type:text" json:"system_prompt"`
+	Model          string         `gorm:"size:64" json:"model"`
+	Temperature    float64        `gorm:"default:0.7" json:"temperature"`
+	MaxTokens      int            `gorm:"default:4096" json:"max_tokens"`
+	Skills         string         `gorm:"type:text" json:"skills"`           // Legacy JSON array (kept for seed compat)
+	CloudPlatformID *uint         `gorm:"index" json:"cloud_platform_id"`    // Bound cloud platform for API calls
+	IsActive       bool           `gorm:"default:true" json:"is_active"`
+	CreatedBy      uint           `json:"created_by"`
+	// Associations (loaded via Preload)
+	AgentSkills    []AgentSkill   `gorm:"foreignKey:AgentID" json:"agent_skills,omitempty"`
+	CloudPlatform  *CloudPlatform `gorm:"foreignKey:CloudPlatformID" json:"cloud_platform,omitempty"`
 }
 
 // Skill represents a capability/tool the agent can use
@@ -44,9 +48,19 @@ type Skill struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 	Name        string         `gorm:"size:128;not null" json:"name"`
 	Description string         `gorm:"type:text" json:"description"`
-	Type        string         `gorm:"size:32" json:"type"` // easystack_api, script, webhook
+	Type        string         `gorm:"size:32" json:"type"`   // cloud_api, script, webhook
 	Config      string         `gorm:"type:text" json:"config"` // JSON config
+	ToolDefs    string         `gorm:"type:text" json:"tool_defs"` // JSON array of OpenAI tool definitions
 	IsActive    bool           `gorm:"default:true" json:"is_active"`
+}
+
+// AgentSkill is the many-to-many join table linking agents to skills
+type AgentSkill struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	AgentID   uint           `gorm:"uniqueIndex:idx_agent_skill;not null" json:"agent_id"`
+	SkillID   uint           `gorm:"uniqueIndex:idx_agent_skill;not null" json:"skill_id"`
+	Skill     Skill          `gorm:"foreignKey:SkillID" json:"skill,omitempty"`
 }
 
 // Conversation represents a chat session

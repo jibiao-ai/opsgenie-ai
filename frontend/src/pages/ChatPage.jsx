@@ -12,6 +12,8 @@ import {
   MessageSquare,
   X,
   CheckCircle2,
+  Zap,
+  Cloud,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import {
@@ -395,6 +397,27 @@ export default function ChatPage() {
             </div>
           )}
         </div>
+
+        {/* Skill & Platform badges for selected agent */}
+        {selectedAgent && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {selectedAgent.agent_skills && selectedAgent.agent_skills.length > 0 && (
+              selectedAgent.agent_skills.slice(0, 3).map((as, i) => (
+                <span key={i} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-purple-50 text-purple-500 rounded-full border border-purple-100">
+                  <Zap className="w-3 h-3" />{as.skill?.name || '技能'}
+                </span>
+              ))
+            )}
+            {selectedAgent.agent_skills && selectedAgent.agent_skills.length > 3 && (
+              <span className="text-xs text-gray-400">+{selectedAgent.agent_skills.length - 3}</span>
+            )}
+            {selectedAgent.cloud_platform && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-50 text-blue-500 rounded-full border border-blue-100">
+                <Cloud className="w-3 h-3" />{selectedAgent.cloud_platform.name}
+              </span>
+            )}
+          </div>
+        )}
 
         <div className="ml-auto">
           <button

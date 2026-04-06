@@ -121,6 +121,7 @@ func main() {
 
 			// Skills
 			auth.GET("/skills", h.ListSkills)
+			auth.GET("/agents/:id/skills", h.GetAgentSkills)
 
 			// Workflows
 			auth.GET("/workflows", h.ListWorkflows)

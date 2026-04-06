@@ -121,20 +121,52 @@ func (h *Handler) GetAgent(c *gin.Context) {
 }
 
 func (h *Handler) CreateAgent(c *gin.Context) {
-	var agent model.Agent
-	if err := c.ShouldBindJSON(&agent); err != nil {
+	var req struct {
+		Name            string   `json:"name"`
+		Description     string   `json:"description"`
+		SystemPrompt    string   `json:"system_prompt"`
+		Model           string   `json:"model"`
+		Temperature     float64  `json:"temperature"`
+		MaxTokens       int      `json:"max_tokens"`
+		IsActive        bool     `json:"is_active"`
+		SkillIDs        []uint   `json:"skill_ids"`
+		CloudPlatformID *uint    `json:"cloud_platform_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "invalid request")
 		return
 	}
-	agent.CreatedBy = c.GetUint("user_id")
+	agent := model.Agent{
+		Name:            req.Name,
+		Description:     req.Description,
+		SystemPrompt:    req.SystemPrompt,
+		Model:           req.Model,
+		Temperature:     req.Temperature,
+		MaxTokens:       req.MaxTokens,
+		IsActive:        req.IsActive,
+		CloudPlatformID: req.CloudPlatformID,
+		CreatedBy:       c.GetUint("user_id"),
+	}
 	if err := h.chatService.CreateAgent(&agent); err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
+	// Update skill associations
+	if len(req.SkillIDs) > 0 {
+		if err := h.chatService.UpdateAgentSkills(agent.ID, req.SkillIDs); err != nil {
+			logger.Log.Warnf("Failed to associate skills with agent %d: %v", agent.ID, err)
+		}
+	}
+	// Reload with associations
+	agentFull, _ := h.chatService.GetAgent(agent.ID)
 	// Record operation log
 	recordOperationLog(c, "agent", "create", agent.ID, agent.Name,
-		fmt.Sprintf("新建智能体: %s, 模型: %s", agent.Name, agent.Model))
-	response.Success(c, agent)
+		fmt.Sprintf("新建智能体: %s, 模型: %s, 技能: %v", agent.Name, agent.Model, req.SkillIDs))
+	if agentFull != nil {
+		response.Success(c, agentFull)
+	} else {
+		response.Success(c, agent)
+	}
 }
 
 func (h *Handler) UpdateAgent(c *gin.Context) {
@@ -142,13 +174,16 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 
 	// Parse update request as a map to support partial updates
 	var req struct {
-		Name         string   `json:"name"`
-		Description  string   `json:"description"`
-		SystemPrompt string   `json:"system_prompt"`
-		Model        string   `json:"model"`
-		Temperature  *float64 `json:"temperature"` // pointer to distinguish 0 from absent
-		MaxTokens    *int     `json:"max_tokens"`  // pointer to distinguish 0 from absent
-		IsActive     *bool    `json:"is_active"`   // pointer to distinguish false from absent
+		Name            string   `json:"name"`
+		Description     string   `json:"description"`
+		SystemPrompt    string   `json:"system_prompt"`
+		Model           string   `json:"model"`
+		Temperature     *float64 `json:"temperature"`       // pointer to distinguish 0 from absent
+		MaxTokens       *int     `json:"max_tokens"`        // pointer to distinguish 0 from absent
+		IsActive        *bool    `json:"is_active"`         // pointer to distinguish false from absent
+		SkillIDs        []uint   `json:"skill_ids"`         // associated skill IDs
+		CloudPlatformID *uint    `json:"cloud_platform_id"` // bound cloud platform
+		ClearPlatform   bool     `json:"clear_platform"`    // explicitly unbind cloud platform
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "invalid request")
@@ -184,15 +219,35 @@ func (h *Handler) UpdateAgent(c *gin.Context) {
 	if req.IsActive != nil {
 		agent.IsActive = *req.IsActive
 	}
+	if req.CloudPlatformID != nil {
+		agent.CloudPlatformID = req.CloudPlatformID
+	} else if req.ClearPlatform {
+		agent.CloudPlatformID = nil
+	}
 
 	if err := h.chatService.UpdateAgent(agent); err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
+
+	// Update skill associations if provided
+	if req.SkillIDs != nil {
+		if err := h.chatService.UpdateAgentSkills(agent.ID, req.SkillIDs); err != nil {
+			logger.Log.Warnf("Failed to update skills for agent %d: %v", agent.ID, err)
+		}
+	}
+
+	// Reload with full associations
+	agentFull, _ := h.chatService.GetAgent(agent.ID)
+
 	// Record operation log
 	recordOperationLog(c, "agent", "update", agent.ID, agent.Name,
 		fmt.Sprintf("更新智能体: %s", agent.Name))
-	response.Success(c, agent)
+	if agentFull != nil {
+		response.Success(c, agentFull)
+	} else {
+		response.Success(c, agent)
+	}
 }
 
 func (h *Handler) DeleteAgent(c *gin.Context) {
@@ -467,6 +522,17 @@ func (h *Handler) WebSocketChat(c *gin.Context) {
 
 func (h *Handler) ListSkills(c *gin.Context) {
 	skills, err := h.chatService.GetSkills()
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, skills)
+}
+
+// GetAgentSkills returns skills associated with a specific agent
+func (h *Handler) GetAgentSkills(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	skills, err := h.chatService.GetSkillsByAgent(uint(id))
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return

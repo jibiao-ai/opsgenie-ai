@@ -140,18 +140,18 @@ func (s *ChatService) SendMessage(conversationID, userID uint, content string, c
 	return userMsg, assistantMsg, nil
 }
 
-// GetAgents returns all agents (including inactive ones).
+// GetAgents returns all agents (including inactive ones) with their associated skills and cloud platform.
 // Inactive agents are still shown in the UI but cannot be selected for new conversations.
 func (s *ChatService) GetAgents() ([]model.Agent, error) {
 	var agents []model.Agent
-	err := repository.DB.Find(&agents).Error
+	err := repository.DB.Preload("AgentSkills.Skill").Preload("CloudPlatform").Find(&agents).Error
 	return agents, err
 }
 
-// GetAgent returns a single agent
+// GetAgent returns a single agent with associations
 func (s *ChatService) GetAgent(id uint) (*model.Agent, error) {
 	var agent model.Agent
-	err := repository.DB.First(&agent, id).Error
+	err := repository.DB.Preload("AgentSkills.Skill").Preload("CloudPlatform").First(&agent, id).Error
 	return &agent, err
 }
 
@@ -175,6 +175,36 @@ func (s *ChatService) GetSkills() ([]model.Skill, error) {
 	var skills []model.Skill
 	err := repository.DB.Find(&skills).Error
 	return skills, err
+}
+
+// UpdateAgentSkills replaces all skill associations for an agent.
+func (s *ChatService) UpdateAgentSkills(agentID uint, skillIDs []uint) error {
+	// Remove existing associations
+	if err := repository.DB.Where("agent_id = ?", agentID).Delete(&model.AgentSkill{}).Error; err != nil {
+		return err
+	}
+	// Insert new associations
+	for _, sid := range skillIDs {
+		as := model.AgentSkill{AgentID: agentID, SkillID: sid}
+		if err := repository.DB.Create(&as).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetSkillsByAgent returns skills associated with an agent.
+func (s *ChatService) GetSkillsByAgent(agentID uint) ([]model.Skill, error) {
+	var agentSkills []model.AgentSkill
+	err := repository.DB.Where("agent_id = ?", agentID).Preload("Skill").Find(&agentSkills).Error
+	if err != nil {
+		return nil, err
+	}
+	var skills []model.Skill
+	for _, as := range agentSkills {
+		skills = append(skills, as.Skill)
+	}
+	return skills, nil
 }
 
 // GetWorkflows returns all workflows

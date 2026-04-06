@@ -70,6 +70,7 @@ export const uploadFile = (file) => {
 
 // Skills
 export const getSkills = () => api.get('/skills');
+export const getAgentSkills = (agentId) => api.get(`/agents/${agentId}/skills`);
 
 // Workflows
 export const getWorkflows = () => api.get('/workflows');

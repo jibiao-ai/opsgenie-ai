@@ -68,6 +68,7 @@ func InitDB(cfg config.DatabaseConfig) error {
 		&model.User{},
 		&model.Agent{},
 		&model.Skill{},
+		&model.AgentSkill{},
 		&model.Conversation{},
 		&model.Message{},
 		&model.TaskLog{},
@@ -340,49 +341,96 @@ func seedDefaultData(db *gorm.DB) {
 	}
 	logger.Log.Info("Default AI providers seeded")
 
-	// Create default skills
+	// Seed default skills with tool definitions
 	db.Model(&model.Skill{}).Count(&count)
 	if count == 0 {
 		skills := []model.Skill{
 			{
 				Name:        "云主机管理",
-				Description: "EasyStack 云主机(Nova)相关操作：查询、创建、启停、重启、调整规格、快照等",
-				Type:        "easystack_api",
-				Config:      `{"service":"compute","api_version":"v2.1","capabilities":["list_servers","create_server","server_actions","attach_volume","detach_volume","list_flavors","list_keypairs"]}`,
-				IsActive:    true,
+				Description: "云主机(Nova)相关操作：查询、创建、启停、重启、调整规格、快照等",
+				Type:        "cloud_api",
+				Config:      `{"service":"compute","api_version":"v2.1"}`,
+				ToolDefs: `[
+{"type":"function","function":{"name":"list_servers","description":"列举所有云主机及其详细信息","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"get_server","description":"查询指定云主机的详细信息","parameters":{"type":"object","properties":{"server_id":{"type":"string","description":"云主机ID"}},"required":["server_id"]}}},
+{"type":"function","function":{"name":"create_server","description":"创建一台新的云主机","parameters":{"type":"object","properties":{"name":{"type":"string","description":"云主机名称"},"flavor_id":{"type":"string","description":"规格ID"},"image_id":{"type":"string","description":"镜像ID"},"network_id":{"type":"string","description":"网络ID"}},"required":["name","flavor_id","image_id","network_id"]}}},
+{"type":"function","function":{"name":"start_server","description":"启动一台已停止的云主机","parameters":{"type":"object","properties":{"server_id":{"type":"string","description":"云主机ID"}},"required":["server_id"]}}},
+{"type":"function","function":{"name":"stop_server","description":"关闭一台运行中的云主机","parameters":{"type":"object","properties":{"server_id":{"type":"string","description":"云主机ID"}},"required":["server_id"]}}},
+{"type":"function","function":{"name":"reboot_server","description":"重启云主机","parameters":{"type":"object","properties":{"server_id":{"type":"string","description":"云主机ID"},"type":{"type":"string","enum":["SOFT","HARD"],"description":"重启类型"}},"required":["server_id"]}}},
+{"type":"function","function":{"name":"delete_server","description":"删除云主机（危险操作）","parameters":{"type":"object","properties":{"server_id":{"type":"string","description":"云主机ID"}},"required":["server_id"]}}},
+{"type":"function","function":{"name":"list_flavors","description":"列举所有可用的云主机规格","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"list_images","description":"列举所有可用镜像","parameters":{"type":"object","properties":{}}}}
+]`,
+				IsActive: true,
 			},
 			{
 				Name:        "云硬盘管理",
-				Description: "EasyStack 云硬盘(Cinder)相关操作：查询、创建、删除、扩容、快照管理",
-				Type:        "easystack_api",
-				Config:      `{"service":"storage","api_version":"v2","capabilities":["list_volumes","create_volume","delete_volume","extend_volume","list_snapshots","create_snapshot"]}`,
-				IsActive:    true,
+				Description: "云硬盘(Cinder)相关操作：查询、创建、删除、扩容、快照管理",
+				Type:        "cloud_api",
+				Config:      `{"service":"storage","api_version":"v2"}`,
+				ToolDefs: `[
+{"type":"function","function":{"name":"list_volumes","description":"列举所有云硬盘及其详细信息","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"create_volume","description":"创建一个新的云硬盘","parameters":{"type":"object","properties":{"name":{"type":"string","description":"云硬盘名称"},"size":{"type":"integer","description":"大小(GB)"}},"required":["name","size"]}}},
+{"type":"function","function":{"name":"delete_volume","description":"删除云硬盘（危险操作）","parameters":{"type":"object","properties":{"volume_id":{"type":"string","description":"云硬盘ID"}},"required":["volume_id"]}}},
+{"type":"function","function":{"name":"extend_volume","description":"扩容云硬盘","parameters":{"type":"object","properties":{"volume_id":{"type":"string","description":"云硬盘ID"},"new_size":{"type":"integer","description":"新大小(GB)"}},"required":["volume_id","new_size"]}}},
+{"type":"function","function":{"name":"list_volume_snapshots","description":"列举所有云硬盘快照","parameters":{"type":"object","properties":{}}}}
+]`,
+				IsActive: true,
 			},
 			{
 				Name:        "网络管理",
-				Description: "EasyStack SDN网络(Neutron)相关操作：网络、子网、路由器、浮动IP、安全组等",
-				Type:        "easystack_api",
-				Config:      `{"service":"network","api_version":"v2.0","capabilities":["list_networks","create_network","list_subnets","create_subnet","list_routers","list_floatingips","list_security_groups","create_security_group_rule"]}`,
-				IsActive:    true,
+				Description: "SDN网络(Neutron)相关操作：网络、子网、路由器、浮动IP、安全组等",
+				Type:        "cloud_api",
+				Config:      `{"service":"network","api_version":"v2.0"}`,
+				ToolDefs: `[
+{"type":"function","function":{"name":"list_networks","description":"列举所有网络","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"list_subnets","description":"列举所有子网","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"list_routers","description":"列举所有路由器","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"list_floating_ips","description":"列举所有浮动IP","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"list_security_groups","description":"列举所有安全组","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"create_security_group","description":"创建安全组","parameters":{"type":"object","properties":{"name":{"type":"string","description":"安全组名称"},"description":{"type":"string","description":"描述"}},"required":["name"]}}},
+{"type":"function","function":{"name":"create_security_group_rule","description":"创建安全组规则","parameters":{"type":"object","properties":{"security_group_id":{"type":"string","description":"安全组ID"},"direction":{"type":"string","enum":["ingress","egress"]},"protocol":{"type":"string","description":"协议"},"port_range_min":{"type":"integer"},"port_range_max":{"type":"integer"}},"required":["security_group_id","direction"]}}}
+]`,
+				IsActive: true,
 			},
 			{
 				Name:        "监控告警",
-				Description: "EasyStack 监控(ECMS)相关操作：指标查询、告警查看、性能分析",
-				Type:        "easystack_api",
-				Config:      `{"service":"monitor","api_version":"v1","capabilities":["query_metrics","list_alerts","resource_top5"]}`,
-				IsActive:    true,
+				Description: "监控(ECMS/Prometheus)相关操作：指标查询、告警查看",
+				Type:        "cloud_api",
+				Config:      `{"service":"monitor","api_version":"v1"}`,
+				ToolDefs: `[
+{"type":"function","function":{"name":"query_metrics","description":"查询监控指标数据(PromQL)","parameters":{"type":"object","properties":{"expr":{"type":"string","description":"PromQL查询表达式"},"start":{"type":"integer","description":"开始时间(Unix时间戳)"},"end":{"type":"integer","description":"结束时间(Unix时间戳)"},"step":{"type":"integer","description":"采样步长(秒)"}},"required":["expr"]}}},
+{"type":"function","function":{"name":"list_alerts","description":"查询告警信息","parameters":{"type":"object","properties":{"states":{"type":"string","description":"告警状态过滤"},"severities":{"type":"string","description":"严重等级过滤"}}}}}
+]`,
+				IsActive: true,
 			},
 			{
 				Name:        "负载均衡管理",
-				Description: "EasyStack 负载均衡(Octavia)相关操作：查询、创建、管理LB、监听器、后端池",
-				Type:        "easystack_api",
-				Config:      `{"service":"loadbalancer","api_version":"v2.0","capabilities":["list_loadbalancers","create_loadbalancer","list_listeners","list_pools","list_members"]}`,
-				IsActive:    true,
+				Description: "负载均衡(Octavia)相关操作：查询LB、监听器、后端池",
+				Type:        "cloud_api",
+				Config:      `{"service":"loadbalancer","api_version":"v2.0"}`,
+				ToolDefs: `[
+{"type":"function","function":{"name":"list_loadbalancers","description":"列举所有负载均衡器","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"list_listeners","description":"列举所有监听器","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"list_pools","description":"列举所有后端池","parameters":{"type":"object","properties":{}}}}
+]`,
+				IsActive: true,
 			},
 		}
 		for _, s := range skills {
 			db.Create(&s)
 		}
 		logger.Log.Info("Default skills created")
+
+		// Auto-associate all skills with the first agent (EasyStack 运维助手)
+		var firstAgent model.Agent
+		if err := db.First(&firstAgent).Error; err == nil {
+			var allSkills []model.Skill
+			db.Find(&allSkills)
+			for _, s := range allSkills {
+				db.Create(&model.AgentSkill{AgentID: firstAgent.ID, SkillID: s.ID})
+			}
+			logger.Log.Infof("Associated %d skills with agent '%s'", len(allSkills), firstAgent.Name)
+		}
 	}
 }
