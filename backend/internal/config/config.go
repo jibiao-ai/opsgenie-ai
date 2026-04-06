@@ -71,7 +71,7 @@ func Load() *Config {
 			VHost:    getEnv("RABBITMQ_VHOST", "/"),
 		},
 		EasyStack: EasyStackConfig{
-			AuthURL:    getEnv("EASYSTACK_AUTH_URL", "https://keystone.example.com"),
+			AuthURL:    getEnv("EASYSTACK_AUTH_URL", "http://keystone.example.com"),
 			Username:   getEnv("EASYSTACK_USERNAME", "admin"),
 			Password:   getEnv("EASYSTACK_PASSWORD", ""),
 			DomainName: getEnv("EASYSTACK_DOMAIN", "default"),

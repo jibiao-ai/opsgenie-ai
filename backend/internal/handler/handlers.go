@@ -1621,7 +1621,7 @@ func (h *Handler) CreateCloudPlatform(c *gin.Context) {
 	// For EasyStack: auto-generate AuthURL from HostIP + BaseDomain if provided
 	authURL := req.AuthURL
 	if req.Type == "easystack" && req.HostIP != "" && req.BaseDomain != "" {
-		authURL = fmt.Sprintf("https://keystone.%s", strings.TrimLeft(req.BaseDomain, "."))
+		authURL = fmt.Sprintf("http://keystone.%s", strings.TrimLeft(req.BaseDomain, "."))
 	}
 	platform := model.CloudPlatform{
 		Name:            req.Name,
@@ -1728,7 +1728,7 @@ func (h *Handler) UpdateCloudPlatform(c *gin.Context) {
 	}
 	// Re-generate AuthURL from HostIP + BaseDomain if both are provided
 	if platform.Type == "easystack" && platform.HostIP != "" && platform.BaseDomain != "" {
-		platform.AuthURL = fmt.Sprintf("https://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
+		platform.AuthURL = fmt.Sprintf("http://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
 	}
 	if err := repository.DB.Save(&platform).Error; err != nil {
 		response.InternalError(c, err.Error())
@@ -1774,7 +1774,7 @@ func (h *Handler) TestCloudPlatform(c *gin.Context) {
 		// Resolve Keystone URL: prefer HostIP+BaseDomain, fall back to AuthURL
 		var keystoneBase string
 		if platform.HostIP != "" && platform.BaseDomain != "" {
-			keystoneBase = fmt.Sprintf("https://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
+			keystoneBase = fmt.Sprintf("http://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
 		} else if platform.AuthURL != "" {
 			keystoneBase = strings.TrimRight(platform.AuthURL, "/")
 		}
