@@ -30,7 +30,7 @@ const pageComponents = {
 
 // 页面元信息（标题 + 副标题）
 const PAGE_META = {
-  dashboard:         { title: '仪表盘',     subtitle: 'AIOPS智能运维平台概览' },
+  dashboard:         { title: '仪表盘',     subtitle: 'OpsGenie AI 智能运维平台概览' },
   chat:              { title: '即时对话',   subtitle: '与 AI 智能体实时交互，处理运维任务' },
   agents:            { title: '智能体',     subtitle: '管理和配置 AI 智能体' },
   skills:            { title: '技能中心',   subtitle: '查看和管理平台技能' },

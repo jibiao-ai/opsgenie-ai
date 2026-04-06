@@ -91,16 +91,11 @@ export default function Sidebar() {
         </button>
         {!sidebarCollapsed && (
           <div className="ml-2 flex items-center gap-2 overflow-hidden">
-            <div
-              className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-bold text-white"
-              style={{ background: '#513CC8' }}
-            >
-              AI
-            </div>
+            <img src="/logo-icon.png" alt="OpsGenie AI" className="w-7 h-7 rounded-lg flex-shrink-0" />
             <span
               className="text-sm font-semibold whitespace-nowrap text-gray-800"
             >
-              AIOPS运维平台
+              <span className="text-gray-800">Ops</span><span style={{ color: '#513CC8' }}>Genie</span> <span className="text-xs ml-0.5 px-1 py-0.5 rounded" style={{ background: '#EEE9FB', color: '#513CC8', fontSize: '10px' }}>AI</span>
             </span>
           </div>
         )}

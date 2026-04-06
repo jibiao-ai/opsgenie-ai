@@ -58,15 +58,10 @@ export default function LoginPage() {
         {/* Logo 区域 */}
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-8">
-            <div
-              className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-bold text-lg"
-              style={{ background: 'rgba(255,255,255,0.2)' }}
-            >
-              AI
-            </div>
+            <img src="/logo-icon.png" alt="OpsGenie AI" className="w-12 h-12 rounded-2xl" style={{ background: 'rgba(255,255,255,0.15)' }} />
             <div>
-              <h1 className="text-xl font-bold text-white">AIOPS运维平台</h1>
-              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.65)' }}>Intelligent Cloud Operations</p>
+              <h1 className="text-xl font-bold text-white">OpsGenie <span className="text-sm font-normal px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.2)' }}>AI</span></h1>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.65)' }}>Intelligent Cloud Operations Platform</p>
             </div>
           </div>
 
@@ -103,7 +98,7 @@ export default function LoginPage() {
 
         {/* 版权 */}
         <p className="relative z-10 text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          © 2024 AIOPS Platform. All rights reserved.
+          © 2024 OpsGenie AI. All rights reserved.
         </p>
       </div>
 
@@ -111,13 +106,8 @@ export default function LoginPage() {
       <div className="flex-1 flex flex-col items-center justify-center bg-white px-8 py-12">
         {/* 移动端 Logo */}
         <div className="md:hidden mb-8 text-center">
-          <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-bold text-lg mx-auto mb-3"
-            style={{ background: '#513CC8' }}
-          >
-            AI
-          </div>
-          <h1 className="text-xl font-bold text-gray-800">AIOPS运维平台</h1>
+          <img src="/logo-icon.png" alt="OpsGenie AI" className="w-14 h-14 rounded-2xl mx-auto mb-3" />
+          <h1 className="text-xl font-bold text-gray-800"><span>Ops</span><span style={{ color: '#513CC8' }}>Genie</span> <span className="text-sm px-1.5 py-0.5 rounded" style={{ background: '#EEE9FB', color: '#513CC8' }}>AI</span></h1>
         </div>
 
         {/* 登录表单容器 */}
@@ -215,7 +205,7 @@ export default function LoginPage() {
               </div>
             </div>
             <p className="text-center text-xs text-gray-300 mt-4">
-              Powered by AIOPS Platform v2.1.0
+              Powered by OpsGenie AI v3.1.0
             </p>
           </div>
         </div>

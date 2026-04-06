@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6C3CE0"/>
+      <stop offset="100%" style="stop-color:#513CC8"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect x="10" y="10" width="180" height="180" rx="36" ry="36" fill="url(#bgGrad)"/>
+  <!-- Stylized O with lightning bolt -->
+  <circle cx="100" cy="100" r="52" fill="none" stroke="white" stroke-width="16" stroke-linecap="round"/>
+  <!-- Lightning bolt cutting through the O -->
+  <polygon points="108,60 92,100 110,100 90,140" fill="white"/>
+</svg>
