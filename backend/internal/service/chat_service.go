@@ -140,10 +140,11 @@ func (s *ChatService) SendMessage(conversationID, userID uint, content string, c
 	return userMsg, assistantMsg, nil
 }
 
-// GetAgents returns all available agents
+// GetAgents returns all agents (including inactive ones).
+// Inactive agents are still shown in the UI but cannot be selected for new conversations.
 func (s *ChatService) GetAgents() ([]model.Agent, error) {
 	var agents []model.Agent
-	err := repository.DB.Where("is_active = ?", true).Find(&agents).Error
+	err := repository.DB.Find(&agents).Error
 	return agents, err
 }
 

@@ -92,7 +92,9 @@ export default function ChatPage() {
       if (res.code === 0 && res.data) {
         setAgents(res.data);
         if (!selectedAgent && res.data.length > 0) {
-          setSelectedAgent(res.data[0]);
+          // Only auto-select an active agent
+          const activeAgent = res.data.find((a) => a.is_active !== false) || res.data[0];
+          setSelectedAgent(activeAgent);
         }
       }
     } catch (err) {
@@ -360,21 +362,36 @@ export default function ChatPage() {
           </button>
           {showAgentDropdown && (
             <div className="absolute top-full mt-1 left-0 w-72 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1">
-              {agents.map((agent) => (
-                <button
-                  key={agent.id}
-                  onClick={() => {
-                    setSelectedAgent(agent);
-                    setShowAgentDropdown(false);
-                  }}
-                  className={`w-full text-left px-4 py-2.5 hover:bg-[#EEE9FB] transition ${
-                    selectedAgent?.id === agent.id ? 'bg-[#EEE9FB] text-[#513CC8]' : ''
-                  }`}
-                >
-                  <div className="font-medium text-sm">{agent.name}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">{agent.description?.slice(0, 50)}</div>
-                </button>
-              ))}
+              {agents.map((agent) => {
+                const isInactive = agent.is_active === false;
+                return (
+                  <button
+                    key={agent.id}
+                    disabled={isInactive}
+                    onClick={() => {
+                      if (!isInactive) {
+                        setSelectedAgent(agent);
+                        setShowAgentDropdown(false);
+                      }
+                    }}
+                    className={`w-full text-left px-4 py-2.5 transition ${
+                      isInactive
+                        ? 'opacity-50 cursor-not-allowed bg-gray-50'
+                        : selectedAgent?.id === agent.id
+                        ? 'bg-[#EEE9FB] text-[#513CC8]'
+                        : 'hover:bg-[#EEE9FB]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{agent.name}</span>
+                      {isInactive && (
+                        <span className="text-xs px-1.5 py-0.5 bg-gray-200 text-gray-500 rounded">已停用</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">{agent.description?.slice(0, 50)}</div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

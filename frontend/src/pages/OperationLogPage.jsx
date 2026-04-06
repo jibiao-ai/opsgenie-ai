@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   FileText,
   Search,
@@ -35,8 +35,8 @@ function ModuleBadge({ module }) {
   const cfg = MODULE_CONFIG[module] || { label: module, icon: Monitor, color: 'bg-gray-100 text-gray-600' };
   const Icon = cfg.icon;
   return (
-    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${cfg.color}`}>
-      <Icon className="w-3 h-3" />
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${cfg.color}`}>
+      <Icon className="w-3 h-3 flex-shrink-0" />
       {cfg.label}
     </span>
   );
@@ -46,10 +46,74 @@ function ActionBadge({ action }) {
   const cfg = ACTION_CONFIG[action] || { label: action, icon: Edit2, color: 'bg-gray-100 text-gray-600' };
   const Icon = cfg.icon;
   return (
-    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${cfg.color}`}>
-      <Icon className="w-3 h-3" />
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${cfg.color}`}>
+      <Icon className="w-3 h-3 flex-shrink-0" />
       {cfg.label}
     </span>
+  );
+}
+
+// Column definitions with initial widths
+const INITIAL_COLUMNS = [
+  { key: 'time',     label: '时间',   width: 180, minWidth: 150 },
+  { key: 'user',     label: '操作人', width: 110, minWidth: 80 },
+  { key: 'module',   label: '模块',   width: 100, minWidth: 85 },
+  { key: 'action',   label: '操作',   width: 85,  minWidth: 75 },
+  { key: 'target',   label: '目标',   width: 160, minWidth: 80 },
+  { key: 'detail',   label: '详情',   width: 260, minWidth: 100 },
+  { key: 'ip',       label: 'IP',     width: 130, minWidth: 100 },
+];
+
+// Resizable column header component
+function ResizableHeader({ columns, onResize }) {
+  const resizingRef = useRef(null);
+
+  const handleMouseDown = (e, colIndex) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = columns[colIndex].width;
+
+    const handleMouseMove = (moveEvt) => {
+      const delta = moveEvt.clientX - startX;
+      const newWidth = Math.max(columns[colIndex].minWidth, startWidth + delta);
+      onResize(colIndex, newWidth);
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      resizingRef.current = null;
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    resizingRef.current = colIndex;
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  return (
+    <thead>
+      <tr className="bg-gray-50 border-b border-gray-100">
+        {columns.map((col, idx) => (
+          <th
+            key={col.key}
+            className="text-left py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider relative select-none"
+            style={{ width: col.width, minWidth: col.minWidth, paddingLeft: 16, paddingRight: 16 }}
+          >
+            {col.label}
+            {idx < columns.length - 1 && (
+              <div
+                className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-[#513CC8]/20 transition-colors z-10"
+                onMouseDown={(e) => handleMouseDown(e, idx)}
+              />
+            )}
+          </th>
+        ))}
+      </tr>
+    </thead>
   );
 }
 
@@ -62,6 +126,13 @@ export default function OperationLogPage() {
   const [moduleFilter, setModuleFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [columns, setColumns] = useState(INITIAL_COLUMNS);
+
+  const handleResize = useCallback((colIndex, newWidth) => {
+    setColumns((prev) =>
+      prev.map((col, i) => (i === colIndex ? { ...col, width: newWidth } : col))
+    );
+  }, []);
 
   const loadLogs = useCallback(async () => {
     setLoading(true);
@@ -107,9 +178,12 @@ export default function OperationLogPage() {
     });
   };
 
+  // Calculate total table width from columns
+  const tableWidth = columns.reduce((sum, col) => sum + col.width, 0);
+
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-6xl">
+      <div className="p-6 space-y-6">
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
 
           {/* Header: filters + search + refresh */}
@@ -179,18 +253,14 @@ export default function OperationLogPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">时间</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">操作人</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">模块</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">目标</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">详情</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">IP</th>
-                  </tr>
-                </thead>
+              <table style={{ minWidth: tableWidth, tableLayout: 'fixed', width: '100%' }}>
+                <ResizableHeader columns={columns} onResize={handleResize} />
+                {/* colgroup to enforce widths */}
+                <colgroup>
+                  {columns.map((col) => (
+                    <col key={col.key} style={{ width: col.width }} />
+                  ))}
+                </colgroup>
                 <tbody className="divide-y divide-gray-100">
                   {filteredLogs.length === 0 ? (
                     <tr>
@@ -205,15 +275,15 @@ export default function OperationLogPage() {
                   ) : (
                     filteredLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-gray-50 transition-colors">
-                        {/* Time */}
-                        <td className="px-6 py-3 text-sm text-gray-500 whitespace-nowrap">
+                        {/* Time - fixed width */}
+                        <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap overflow-hidden text-ellipsis">
                           <div className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-gray-300" />
-                            {formatTime(log.created_at)}
+                            <Clock className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
+                            <span>{formatTime(log.created_at)}</span>
                           </div>
                         </td>
                         {/* User */}
-                        <td className="px-6 py-3">
+                        <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <div
                               className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
@@ -221,27 +291,27 @@ export default function OperationLogPage() {
                             >
                               {(log.username || 'U').slice(0, 1).toUpperCase()}
                             </div>
-                            <span className="text-sm text-gray-700">{log.username || '-'}</span>
+                            <span className="text-sm text-gray-700 truncate">{log.username || '-'}</span>
                           </div>
                         </td>
-                        {/* Module */}
-                        <td className="px-6 py-3">
+                        {/* Module - nowrap badge */}
+                        <td className="px-4 py-3 whitespace-nowrap">
                           <ModuleBadge module={log.module} />
                         </td>
-                        {/* Action */}
-                        <td className="px-6 py-3">
+                        {/* Action - nowrap badge */}
+                        <td className="px-4 py-3 whitespace-nowrap">
                           <ActionBadge action={log.action} />
                         </td>
                         {/* Target */}
-                        <td className="px-6 py-3 text-sm text-gray-700 max-w-[200px] truncate" title={log.target_name}>
+                        <td className="px-4 py-3 text-sm text-gray-700 overflow-hidden text-ellipsis whitespace-nowrap" title={log.target_name}>
                           {log.target_name || '-'}
                         </td>
                         {/* Detail */}
-                        <td className="px-6 py-3 text-sm text-gray-500 max-w-[260px] truncate" title={log.detail}>
+                        <td className="px-4 py-3 text-sm text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap" title={log.detail}>
                           {log.detail || '-'}
                         </td>
                         {/* IP */}
-                        <td className="px-6 py-3 text-sm text-gray-400 font-mono text-xs">
+                        <td className="px-4 py-3 text-sm text-gray-400 font-mono whitespace-nowrap" style={{ fontSize: '12px' }}>
                           {log.ip || '-'}
                         </td>
                       </tr>
