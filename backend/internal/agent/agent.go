@@ -248,6 +248,17 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 					Name:       tc.Function.Name,
 				})
 			}
+
+			// After all tool calls, inject a strict data-binding reminder
+			messages = append(messages, ChatMessage{
+				Role: "system",
+				Content: "[数据校验指令] 以上工具已返回真实数据。你必须严格遵守：" +
+					"1) 数量必须与返回数据完全一致，返回N条就展示N条，不可多不可少；" +
+					"2) 所有数值、标签、指标名必须原样引用工具返回的数据，禁止编造；" +
+					"3) 如果工具返回了error，如实告知用户该数据获取失败及错误原因；" +
+					"4) 禁止使用「根据经验」「通常来说」「一般情况下」等推测性表述；" +
+					"5) 回答末尾必须附加可信度评分：「📊 可信度：X/10」。",
+			})
 			continue
 		}
 
@@ -256,8 +267,70 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 			logger.Log.Warnf("[Chat] LLM returned final answer on FIRST iteration without calling ANY tools. Agent '%s' has %d tools available. The response may contain hallucinated data.",
 				agentModel.Name, len(tools))
 		}
-		logger.Log.Infof("[Chat] Final response at iteration %d, content_length=%d", iterations, len(choice.Message.Content))
+
 		content := choice.Message.Content
+
+		// Handle truncated response: if finish_reason is "length", the AI
+		// output was cut short by max_tokens. We auto-continue by asking
+		// the LLM to finish its response.
+		if choice.FinishReason == "length" && len(content) > 0 {
+			logger.Log.Warnf("[Chat] Response truncated (finish_reason=length) at iteration %d, content_length=%d. Auto-continuing.", iterations, len(content))
+
+			// Append what we got so far and ask to continue
+			messages = append(messages, ChatMessage{Role: "assistant", Content: content})
+			messages = append(messages, ChatMessage{
+				Role:    "user",
+				Content: "你的回答被截断了，请从截断处继续完成回答。不要重复已经输出的内容，直接从断点处继续。",
+			})
+
+			// Try up to 2 continuations
+			var fullContent strings.Builder
+			fullContent.WriteString(content)
+			for contIdx := 0; contIdx < 2; contIdx++ {
+				contReqBody := map[string]interface{}{
+					"model":    modelName,
+					"messages": messages,
+				}
+				if agentModel.Temperature > 0 {
+					contReqBody["temperature"] = agentModel.Temperature
+				}
+				if agentModel.MaxTokens > 0 {
+					contReqBody["max_tokens"] = agentModel.MaxTokens
+				}
+				contRespBody, contErr := a.callAI(contReqBody)
+				if contErr != nil {
+					logger.Log.Warnf("[Chat] Continuation request failed: %v", contErr)
+					break
+				}
+				var contResp struct {
+					Choices []struct {
+						Message struct {
+							Content string `json:"content"`
+						} `json:"message"`
+						FinishReason string `json:"finish_reason"`
+					} `json:"choices"`
+				}
+				if err := json.Unmarshal(contRespBody, &contResp); err != nil || len(contResp.Choices) == 0 {
+					break
+				}
+				contContent := contResp.Choices[0].Message.Content
+				fullContent.WriteString(contContent)
+				logger.Log.Infof("[Chat] Continuation %d added %d chars, total=%d", contIdx+1, len(contContent), fullContent.Len())
+
+				if contResp.Choices[0].FinishReason != "length" {
+					break // Response is complete
+				}
+				// Still truncated, append and ask to continue again
+				messages = append(messages, ChatMessage{Role: "assistant", Content: contContent})
+				messages = append(messages, ChatMessage{
+					Role:    "user",
+					Content: "继续完成回答，不要重复已输出内容。",
+				})
+			}
+			content = fullContent.String()
+		}
+
+		logger.Log.Infof("[Chat] Final response at iteration %d, content_length=%d", iterations, len(content))
 		if callback != nil {
 			callback(content, true)
 		}

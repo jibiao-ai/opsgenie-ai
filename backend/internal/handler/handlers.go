@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/jibiao-ai/opsgenie-ai/internal/agent"
 	"github.com/jibiao-ai/opsgenie-ai/internal/model"
 	"github.com/jibiao-ai/opsgenie-ai/internal/repository"
 	"github.com/jibiao-ai/opsgenie-ai/internal/service"
@@ -1117,20 +1118,32 @@ func authenticateZStack(client *http.Client, p model.CloudPlatform) (string, err
 	return loginResp.Inventory.UUID, nil
 }
 
+// resolveEasyStackServiceURL builds the correct service URL for a given OpenStack component.
+// Multi-domain mode: http://<component>.<BaseDomain> (e.g., http://nova.opsl2.svc.cluster.local)
+// Legacy mode: all services share the AuthURL.
+func resolveEasyStackServiceURL(p model.CloudPlatform, component string) string {
+	if p.HostIP != "" && p.BaseDomain != "" {
+		bd := strings.TrimLeft(p.BaseDomain, ".")
+		return fmt.Sprintf("http://%s.%s", component, bd)
+	}
+	return strings.TrimRight(p.AuthURL, "/")
+}
+
 // fetchEasyStackServers fetches the total VM count from a connected EasyStack platform.
-// Uses GET /v2.1/{project_id}/servers/detail?all_tenants=true to count all VMs.
-func fetchEasyStackServers(client *http.Client, baseURL, projectID, token string) int {
-	if projectID == "" {
+// Uses Nova API: GET /v2.1/servers/detail (per EasyStack API doc Section 4)
+func fetchEasyStackServers(client *http.Client, p model.CloudPlatform, token string) int {
+	if p.ProjectID == "" {
 		return 0
 	}
-	serversURL := fmt.Sprintf("%s/v2.1/%s/servers/detail?all_tenants=true",
-		strings.TrimRight(baseURL, "/"), projectID)
+	novaURL := resolveEasyStackServiceURL(p, "nova")
+	serversURL := fmt.Sprintf("%s/v2.1/servers/detail", novaURL)
 	req, err := http.NewRequest("GET", serversURL, nil)
 	if err != nil {
 		logger.Log.Warnf("EasyStack: create servers request failed: %v", err)
 		return 0
 	}
 	req.Header.Set("X-Auth-Token", token)
+	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Log.Warnf("EasyStack: fetch servers failed: %v", err)
@@ -1138,6 +1151,10 @@ func fetchEasyStackServers(client *http.Client, baseURL, projectID, token string
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		logger.Log.Warnf("EasyStack: fetch servers HTTP %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+		return 0
+	}
 	var serversResp struct {
 		Servers []json.RawMessage `json:"servers"`
 	}
@@ -1145,23 +1162,25 @@ func fetchEasyStackServers(client *http.Client, baseURL, projectID, token string
 		logger.Log.Warnf("EasyStack: parse servers response failed: %v", err)
 		return 0
 	}
+	logger.Log.Infof("EasyStack: fetched %d servers from %s", len(serversResp.Servers), novaURL)
 	return len(serversResp.Servers)
 }
 
 // fetchEasyStackVolumes fetches the total volume count from a connected EasyStack platform.
-// Uses GET /v2/{project_id}/volumes/detail?all_tenants=true to count all volumes.
-func fetchEasyStackVolumes(client *http.Client, baseURL, projectID, token string) int {
-	if projectID == "" {
+// Uses Cinder API: GET /v2/{project_id}/volumes/detail (per EasyStack API doc Section 3)
+func fetchEasyStackVolumes(client *http.Client, p model.CloudPlatform, token string) int {
+	if p.ProjectID == "" {
 		return 0
 	}
-	volumesURL := fmt.Sprintf("%s/v2/%s/volumes/detail?all_tenants=true",
-		strings.TrimRight(baseURL, "/"), projectID)
+	cinderURL := resolveEasyStackServiceURL(p, "cinder")
+	volumesURL := fmt.Sprintf("%s/v2/%s/volumes/detail", cinderURL, p.ProjectID)
 	req, err := http.NewRequest("GET", volumesURL, nil)
 	if err != nil {
 		logger.Log.Warnf("EasyStack: create volumes request failed: %v", err)
 		return 0
 	}
 	req.Header.Set("X-Auth-Token", token)
+	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Log.Warnf("EasyStack: fetch volumes failed: %v", err)
@@ -1169,6 +1188,10 @@ func fetchEasyStackVolumes(client *http.Client, baseURL, projectID, token string
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		logger.Log.Warnf("EasyStack: fetch volumes HTTP %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+		return 0
+	}
 	var volumesResp struct {
 		Volumes []json.RawMessage `json:"volumes"`
 	}
@@ -1176,6 +1199,7 @@ func fetchEasyStackVolumes(client *http.Client, baseURL, projectID, token string
 		logger.Log.Warnf("EasyStack: parse volumes response failed: %v", err)
 		return 0
 	}
+	logger.Log.Infof("EasyStack: fetched %d volumes from %s", len(volumesResp.Volumes), cinderURL)
 	return len(volumesResp.Volumes)
 }
 
@@ -1188,28 +1212,36 @@ type AlertItem struct {
 	Timestamp string `json:"timestamp"`
 }
 
-// fetchEasyStackAlerts fetches alerts from the EasyStack observable service.
-// Uses GET /v1/{project_id}/alerts (per ECF 6.2.1 API docs).
-// Response format: { "code": 0, "data": { "statistics": {...}, "items": [...] } }
-func fetchEasyStackAlerts(client *http.Client, baseURL, projectID, token, platformName string) (firing, resolved int, alerts []AlertItem) {
-	if projectID == "" {
+// fetchEasyStackAlerts fetches alerts from the EasyStack ECMS alert API.
+// Uses GET /apis/monitoring/v1/ecms/alerts (Prometheus-compatible ECMS endpoint).
+// Response format varies: may return { "code": 0, "data": { "statistics": {...}, "items": [...] } }
+// or Prometheus-style alert list.
+func fetchEasyStackAlerts(client *http.Client, p model.CloudPlatform, token, platformName string) (firing, resolved int, alerts []AlertItem) {
+	if p.ProjectID == "" {
 		return 0, 0, nil
 	}
-	alertsURL := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true",
-		strings.TrimRight(baseURL, "/"), projectID)
+	emlaURL := resolveEasyStackServiceURL(p, "emla")
+	alertsURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts", emlaURL)
 	req, err := http.NewRequest("GET", alertsURL, nil)
 	if err != nil {
 		logger.Log.Warnf("EasyStack: create alerts request failed: %v", err)
 		return 0, 0, nil
 	}
 	req.Header.Set("X-Auth-Token", token)
+	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Log.Warnf("EasyStack: fetch alerts failed: %v", err)
+		logger.Log.Warnf("EasyStack: fetch alerts from %s failed: %v", alertsURL, err)
 		return 0, 0, nil
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 400 {
+		logger.Log.Warnf("EasyStack: fetch alerts HTTP %d from %s: %s", resp.StatusCode, alertsURL, string(body[:min(len(body), 200)]))
+		return 0, 0, nil
+	}
+	logger.Log.Infof("EasyStack: fetch alerts from %s → HTTP %d (%d bytes)", alertsURL, resp.StatusCode, len(body))
 
 	// EasyStack observable service response format:
 	// { "code": 0, "data": { "statistics": { "total": N, "critical": N, "warning": N, "info": N },
@@ -1459,7 +1491,8 @@ func (h *Handler) GetResourceMonitor(c *gin.Context) {
 	var alertList []AlertItem
 
 	// Shared HTTP client with reasonable timeout for all platform API calls
-	apiClient := &http.Client{Timeout: 15 * time.Second}
+	// Note: For multi-domain EasyStack platforms, a custom DNS client is created per platform.
+	defaultClient := &http.Client{Timeout: 15 * time.Second}
 
 	for _, p := range platforms {
 		pr := PlatformResource{
@@ -1474,22 +1507,23 @@ func (h *Handler) GetResourceMonitor(c *gin.Context) {
 		case p.Status == "connected" && p.Type == "easystack" &&
 			p.AuthURL != "" && p.Username != "" && p.Password != "":
 
+			// Use custom DNS client for multi-domain mode (resolves *.BaseDomain → HostIP)
+			apiClient := agent.NewHTTPClientWithCustomDNS(p.HostIP, p.BaseDomain, 15*time.Second)
+
 			token, err := authenticateEasyStack(apiClient, p)
 			if err != nil {
 				logger.Log.Warnf("EasyStack auth failed for %s: %v", p.Name, err)
 				break
 			}
 
-			baseURL := strings.TrimRight(p.AuthURL, "/")
+			// Fetch VMs (Nova API: GET /v2.1/servers/detail)
+			pr.VMCount = fetchEasyStackServers(apiClient, p, token)
 
-			// Fetch VMs (Nova API)
-			pr.VMCount = fetchEasyStackServers(apiClient, baseURL, p.ProjectID, token)
+			// Fetch Volumes (Cinder API: GET /v2/{project_id}/volumes/detail)
+			pr.VolumeCount = fetchEasyStackVolumes(apiClient, p, token)
 
-			// Fetch Volumes (Cinder API)
-			pr.VolumeCount = fetchEasyStackVolumes(apiClient, baseURL, p.ProjectID, token)
-
-			// Fetch Alerts (Observable service API - per ECF 6.2.1 docs)
-			f, r, alerts := fetchEasyStackAlerts(apiClient, baseURL, p.ProjectID, token, p.Name)
+			// Fetch Alerts (ECMS API: GET /apis/monitoring/v1/ecms/alerts)
+			f, r, alerts := fetchEasyStackAlerts(apiClient, p, token, p.Name)
 			firingAlerts += f
 			resolvedAlerts += r
 			alertList = append(alertList, alerts...)
@@ -1497,7 +1531,7 @@ func (h *Handler) GetResourceMonitor(c *gin.Context) {
 		// ── ZStack platform ──
 		case p.Status == "connected" && p.Type == "zstack" && p.Endpoint != "":
 
-			sessionID, err := authenticateZStack(apiClient, p)
+			sessionID, err := authenticateZStack(defaultClient, p)
 			if err != nil {
 				logger.Log.Warnf("ZStack auth failed for %s: %v", p.Name, err)
 				break
@@ -1506,13 +1540,13 @@ func (h *Handler) GetResourceMonitor(c *gin.Context) {
 			endpoint := strings.TrimRight(p.Endpoint, "/")
 
 			// Fetch VMs (QueryVmInstance API)
-			pr.VMCount = fetchZStackVMs(apiClient, endpoint, sessionID)
+			pr.VMCount = fetchZStackVMs(defaultClient, endpoint, sessionID)
 
 			// Fetch Volumes (QueryVolume API)
-			pr.VolumeCount = fetchZStackVolumes(apiClient, endpoint, sessionID)
+			pr.VolumeCount = fetchZStackVolumes(defaultClient, endpoint, sessionID)
 
 			// Fetch Alerts (QueryAlarm API)
-			f, r, alerts := fetchZStackAlerts(apiClient, endpoint, sessionID, p.Name)
+			f, r, alerts := fetchZStackAlerts(defaultClient, endpoint, sessionID, p.Name)
 			firingAlerts += f
 			resolvedAlerts += r
 			alertList = append(alertList, alerts...)

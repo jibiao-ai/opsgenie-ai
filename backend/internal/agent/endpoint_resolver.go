@@ -99,8 +99,15 @@ func (ep *EasyStackServiceEndpoints) ServiceURLFor(toolName string) string {
 	case strings.HasPrefix(toolName, "list_volume"),
 		strings.HasPrefix(toolName, "create_volume"),
 		strings.HasPrefix(toolName, "delete_volume"),
-		strings.HasPrefix(toolName, "extend_volume"):
+		strings.HasPrefix(toolName, "extend_volume"),
+		toolName == "get_volume_detail",
+		toolName == "get_storage_pools":
 		return ep.Cinder
+
+	// Compute (Nova) - includes volume attachment operations
+	case toolName == "attach_volume",
+		toolName == "detach_volume":
+		return ep.Nova
 
 	// Network (Neutron)
 	case strings.HasPrefix(toolName, "list_network"),

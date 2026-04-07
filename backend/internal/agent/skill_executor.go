@@ -361,6 +361,15 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail", serviceURL, projectID), nil)
 	case "create_volume":
 		volParams := map[string]interface{}{"name": getString("name"), "size": getInt("size")}
+		if vt := getString("volume_type"); vt != "" {
+			volParams["volume_type"] = vt
+		}
+		if desc := getString("description"); desc != "" {
+			volParams["description"] = desc
+		}
+		if imgRef := getString("imageRef"); imgRef != "" {
+			volParams["imageRef"] = imgRef
+		}
 		result, err = doReq("POST", fmt.Sprintf("%s/v2/%s/volumes", serviceURL, projectID), map[string]interface{}{"volume": volParams})
 	case "delete_volume":
 		_, err = doReq("DELETE", fmt.Sprintf("%s/v2/%s/volumes/%s", serviceURL, projectID, getString("volume_id")), nil)
@@ -368,13 +377,53 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			return `{"status":"success","message":"云硬盘删除命令已发送"}`, nil
 		}
 	case "extend_volume":
-		_, err = doReq("POST", fmt.Sprintf("%s/v3/%s/volumes/%s/action", serviceURL, projectID, getString("volume_id")),
+		_, err = doReq("POST", fmt.Sprintf("%s/v2/%s/volumes/%s/action", serviceURL, projectID, getString("volume_id")),
 			map[string]interface{}{"os-extend": map[string]int{"new_size": getInt("new_size")}})
 		if err == nil {
 			return `{"status":"success","message":"云硬盘扩容命令已发送"}`, nil
 		}
 	case "list_volume_snapshots":
 		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/snapshots/detail", serviceURL, projectID), nil)
+	// -- Volume types (per EasyStack API doc Section 3.1) --
+	case "list_volume_types":
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/types", serviceURL, projectID), nil)
+	// -- Volume detail (per EasyStack API doc Section 4.5) --
+	case "get_volume_detail":
+		volID := getString("volume_id")
+		if volID != "" {
+			result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail?id=%s", serviceURL, projectID, volID), nil)
+		} else {
+			result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail", serviceURL, projectID), nil)
+		}
+	// -- Storage pools (per EasyStack API doc Section 4.5 interface 2) --
+	case "get_storage_pools":
+		result, err = doReq("GET", fmt.Sprintf("%s/v3/%s/scheduler-stats/get_pools?detail=true", serviceURL, projectID), nil)
+	// -- Attach volume to server (per EasyStack API doc Section 4.3) --
+	case "attach_volume":
+		serverID := getString("server_id")
+		volumeID := getString("volume_id")
+		attachBody := map[string]interface{}{
+			"volumeAttachment": map[string]interface{}{
+				"volumeId": volumeID,
+			},
+		}
+		if dev := getString("device"); dev != "" {
+			attachBody["volumeAttachment"].(map[string]interface{})["device"] = dev
+		}
+		// attach_volume uses Nova endpoint (serviceURL already resolved to Nova)
+		result, err = doReq("POST", fmt.Sprintf("%s/v2.1/servers/%s/os-volume_attachments", serviceURL, serverID), attachBody)
+		if err == nil && result == nil {
+			return `{"status":"success","message":"云硬盘挂载命令已发送"}`, nil
+		}
+	// -- Detach volume from server --
+	case "detach_volume":
+		serverID := getString("server_id")
+		attachmentID := getString("attachment_id")
+		// detach_volume uses Nova endpoint (serviceURL already resolved to Nova)
+		_, err = doReq("DELETE", fmt.Sprintf("%s/v2.1/servers/%s/os-volume_attachments/%s", serviceURL, serverID, attachmentID), nil)
+		if err == nil {
+			return `{"status":"success","message":"云硬盘卸载命令已发送"}`, nil
+		}
 	// Network
 	case "list_networks":
 		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/networks", serviceURL), nil)
@@ -409,158 +458,22 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/listeners", serviceURL), nil)
 	case "list_pools":
 		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/pools", serviceURL), nil)
-	// Monitoring
+	// ==================== Monitoring / Observability (ECF 6.2.1) ====================
+	// Metrics API prefix:  /emla/openapi/v1/{project_id}/... (Section 15.1)
+	// Alert API:           /apis/monitoring/v1/ecms/alerts  (Prometheus-compat ECMS)
+
+	// -- Instant PromQL query --
 	case "query_metrics":
-		start := int64(getInt("start"))
-		end := int64(getInt("end"))
-		step := int64(getInt("step"))
-		if start == 0 {
-			start = time.Now().Add(-1 * time.Hour).Unix()
+		expr := getString("expr")
+		queryParams := map[string]interface{}{"expr": expr}
+		if t := int64(getInt("time")); t > 0 {
+			queryParams["time"] = t
+		} else {
+			queryParams["time"] = time.Now().Unix()
 		}
-		if end == 0 {
-			end = time.Now().Unix()
-		}
-		if step == 0 {
-			step = 60
-		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query", serviceURL, projectID),
-			map[string]interface{}{"expr": getString("expr"), "start": start, "end": end, "step": step})
-	case "list_alerts":
-		// EMLA monitoring API: /apis/monitoring/v1/ecms/alerts
-		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts", serviceURL)
-		qParams := []string{}
-		if s := getString("states"); s != "" {
-			qParams = append(qParams, "alerts_status="+s)
-		}
-		if s := getString("severities"); s != "" {
-			qParams = append(qParams, "severity="+s)
-		}
-		if len(qParams) > 0 {
-			alertURL += "?" + strings.Join(qParams, "&")
-		}
-		result, err = doReq("GET", alertURL, nil)
+		result, err = doReq("POST", fmt.Sprintf("%s/emla/openapi/v1/%s/metrics/query", serviceURL, projectID), queryParams)
 
-	// ==================== Monitoring Alarm Skill Tools (ECF 6.2.1 Observability) ====================
-
-	// -- Active alarms (firing) --
-	case "list_active_alerts":
-		// EMLA monitoring API: /apis/monitoring/v1/ecms/alerts with alerts_status=unresolved
-		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts?alerts_status=unresolved", serviceURL)
-		if s := getString("severities"); s != "" {
-			alertURL += "&severity=" + s
-		}
-		result, err = doReq("GET", alertURL, nil)
-
-	// -- Recovered alarms (resolved) --
-	case "list_recovered_alerts":
-		// EMLA monitoring API: /apis/monitoring/v1/ecms/alerts with alerts_status=resolved
-		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts?alerts_status=resolved", serviceURL)
-		if s := getString("severities"); s != "" {
-			alertURL += "&severity=" + s
-		}
-		result, err = doReq("GET", alertURL, nil)
-
-	// -- Alarm severity summary (critical/warning/info counts) --
-	case "get_alarm_severity_summary":
-		// EMLA monitoring API: same alerts endpoint, extract level_info from response
-		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts", serviceURL)
-		result, err = doReq("GET", alertURL, nil)
-		if err == nil && result != nil {
-			// Parse EMLA response format: {total, level_info: {critical, warning, info}}
-			var alertResp struct {
-				Total     int `json:"total"`
-				LevelInfo struct {
-					Critical int `json:"critical"`
-					Warning  int `json:"warning"`
-					Info     int `json:"info"`
-				} `json:"level_info"`
-			}
-			if json.Unmarshal(result, &alertResp) == nil {
-				summary := map[string]interface{}{
-					"total":    alertResp.Total,
-					"critical": alertResp.LevelInfo.Critical,
-					"warning":  alertResp.LevelInfo.Warning,
-					"info":     alertResp.LevelInfo.Info,
-				}
-				summaryJSON, _ := json.Marshal(summary)
-				result = summaryJSON
-			}
-		}
-
-	// -- Control plane service status (40+ service_*_state metrics) --
-	case "get_control_plane_status":
-		metricsFilter := []string{
-			"service_control_api_state",
-			"service_compute_api_state",
-			"service_compute_conductor_state",
-			"service_compute_scheduler_state",
-			"service_network_api_state",
-			"service_network_dhcp_state",
-			"service_network_l3_state",
-			"service_network_metadata_state",
-			"service_network_lb_state",
-			"service_storage_api_state",
-			"service_storage_scheduler_state",
-			"service_storage_volume_state",
-			"service_image_api_state",
-			"service_identity_api_state",
-			"service_monitoring_api_state",
-			"service_database_state",
-			"service_mq_state",
-			"service_orchestration_api_state",
-			"service_baremetal_api_state",
-			"service_container_api_state",
-		}
-		metricsReq := map[string]interface{}{
-			"metrics_filter": metricsFilter,
-			"time":           time.Now().Unix(),
-		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", serviceURL), metricsReq)
-
-	// -- Storage cluster status --
-	case "get_storage_cluster_status":
-		storageMetrics := []string{
-			"storage_health_status",
-			"ceph_mon_quorum_status",
-			"storage_osd_total",
-			"storage_osd_up",
-			"storage_osd_down",
-			"storage_actual_capacity_total_bytes",
-			"storage_actual_capacity_free_bytes",
-			"storage_actual_capacity_used_bytes",
-			"storage_user_data_pool_bytes",
-			"storage_cluster_iops_read",
-			"storage_cluster_iops_write",
-			"storage_cluster_throughput_read",
-			"storage_cluster_throughput_write",
-		}
-		metricsReq := map[string]interface{}{
-			"metrics_filter": storageMetrics,
-			"time":           time.Now().Unix(),
-		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/storage/metrics/query", serviceURL), metricsReq)
-
-	// -- Dashboard overview metrics (VM state, CPU, memory, storage, top5) --
-	case "get_dashboard_overview":
-		dashMetrics := []string{
-			"dashboard_instances_state",
-			"dashboard_instances_vcpu_usage",
-			"dashboard_cpu_total",
-			"dashboard_cpu_used",
-			"dashboard_memory_total",
-			"dashboard_memory_usage",
-			"dashboard_storage_total",
-			"dashboard_storage_used",
-			"dashboard_cache_disk_total",
-			"dashboard_cache_disk_used",
-		}
-		metricsReq := map[string]interface{}{
-			"metrics_filter": dashMetrics,
-			"time":           time.Now().Unix(),
-		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query", serviceURL, projectID), metricsReq)
-
-	// -- Query metrics range (PromQL with time range) --
+	// -- Range PromQL query --
 	case "query_metrics_range":
 		start := int64(getInt("start"))
 		end := int64(getInt("end"))
@@ -574,45 +487,215 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		if step == 0 {
 			step = 60
 		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/%s/metrics/query_range", serviceURL, projectID),
+		result, err = doReq("POST", fmt.Sprintf("%s/emla/openapi/v1/%s/metrics/query/range", serviceURL, projectID),
 			map[string]interface{}{"expr": getString("expr"), "start": start, "end": end, "step": step})
 
-	// -- All cloud service health check (comprehensive) --
-	case "check_all_services_health":
-		// Query all known service state metrics from the control plane
-		allServiceMetrics := []string{
+	// -- List alerts (generic, supports state and severity filters) --
+	case "list_alerts":
+		// Prometheus-compat ECMS alert API: /apis/monitoring/v1/ecms/alerts
+		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts", serviceURL)
+		qParams := []string{}
+		if s := getString("alerts_status"); s != "" {
+			qParams = append(qParams, "alerts_status="+s)
+		}
+		if s := getString("severity"); s != "" {
+			qParams = append(qParams, "severity="+s)
+		}
+		if len(qParams) > 0 {
+			alertURL += "?" + strings.Join(qParams, "&")
+		}
+		result, err = doReq("GET", alertURL, nil)
+		// Pre-filter: extract only essential alert fields to reduce token usage
+		result = preFilterAlerts(result, err)
+
+	// -- Active alerts (unresolved / firing) --
+	case "list_active_alerts":
+		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts?alerts_status=unresolved", serviceURL)
+		if s := getString("severity"); s != "" {
+			alertURL += "&severity=" + s
+		}
+		result, err = doReq("GET", alertURL, nil)
+		result = preFilterAlerts(result, err)
+
+	// -- Recovered alerts (resolved) --
+	case "list_recovered_alerts":
+		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts?alerts_status=resolved", serviceURL)
+		if s := getString("severity"); s != "" {
+			alertURL += "&severity=" + s
+		}
+		result, err = doReq("GET", alertURL, nil)
+		result = preFilterAlerts(result, err)
+
+	// -- Alarm severity summary --
+	case "get_alarm_severity_summary":
+		alertURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts", serviceURL)
+		result, err = doReq("GET", alertURL, nil)
+		if err == nil && result != nil {
+			// Parse EMLA response and extract statistics only
+			var alertResp struct {
+				Code int `json:"code"`
+				Data struct {
+					Statistics struct {
+						Total    int `json:"total"`
+						Critical int `json:"critical"`
+						Warning  int `json:"warning"`
+						Info     int `json:"info"`
+					} `json:"statistics"`
+				} `json:"data"`
+				// Also try flat format
+				Total     int `json:"total"`
+				LevelInfo struct {
+					Critical int `json:"critical"`
+					Warning  int `json:"warning"`
+					Info     int `json:"info"`
+				} `json:"level_info"`
+			}
+			if json.Unmarshal(result, &alertResp) == nil {
+				summary := map[string]interface{}{}
+				if alertResp.Data.Statistics.Total > 0 || alertResp.Data.Statistics.Critical > 0 {
+					summary["total"] = alertResp.Data.Statistics.Total
+					summary["critical"] = alertResp.Data.Statistics.Critical
+					summary["warning"] = alertResp.Data.Statistics.Warning
+					summary["info"] = alertResp.Data.Statistics.Info
+				} else {
+					summary["total"] = alertResp.Total
+					summary["critical"] = alertResp.LevelInfo.Critical
+					summary["warning"] = alertResp.LevelInfo.Warning
+					summary["info"] = alertResp.LevelInfo.Info
+				}
+				summary["_source"] = "emla_alerts_messages_api"
+				summaryJSON, _ := json.Marshal(summary)
+				result = summaryJSON
+			}
+		}
+
+	// -- Control plane service status (official ECF 6.2.1 metric names from Section 15.1.4.4) --
+	case "get_control_plane_status":
+		// Use EMLA metrics query with official service_*_state metric names
+		serviceMetrics := strings.Join([]string{
 			"service_control_api_state",
+			"service_control_scheduler_state",
+			"service_control_management_state",
 			"service_compute_api_state",
-			"service_compute_conductor_state",
+			"service_compute_management_state",
+			"service_compute_state",
 			"service_compute_scheduler_state",
 			"service_network_api_state",
 			"service_network_dhcp_state",
 			"service_network_l3_state",
-			"service_network_metadata_state",
 			"service_network_lb_state",
-			"service_storage_api_state",
-			"service_storage_scheduler_state",
-			"service_storage_volume_state",
-			"service_image_api_state",
-			"service_identity_api_state",
+			"service_network_metadata_state",
+			"service_network_virtual_switch_state",
+			"service_authentication_api_state",
+			"service_image_management_state",
+			"service_block_storage_api_state",
+			"service_block_storage_scheduler_state",
+			"service_block_storage_state",
 			"service_monitoring_api_state",
+			"service_monitoring_alert_api_state",
 			"service_database_state",
-			"service_mq_state",
+			"service_rabbitmq_state",
 			"service_orchestration_api_state",
-			"service_baremetal_api_state",
-			"service_container_api_state",
+			"service_hostha_state",
+			"service_time_synchronization_state",
+			"service_cloud_console_state",
+		}, "|")
+		// Use PromQL union query: {__name__=~"service_...|service_..."}
+		expr := fmt.Sprintf(`{__name__=~"%s"}`, serviceMetrics)
+		result, err = doReq("POST", fmt.Sprintf("%s/emla/openapi/v1/%s/metrics/query", serviceURL, projectID),
+			map[string]interface{}{"expr": expr, "time": time.Now().Unix()})
+
+	// -- Storage cluster status (official ECF 6.2.1 metric names from Section 15.1.4.5) --
+	case "get_storage_cluster_status":
+		storageMetrics := strings.Join([]string{
+			"storage_health_status",
+			"storage_osd_total",
+			"storage_osd_up_total",
+			"storage_osd_down_total",
+			"storage_actual_capacity_total_bytes",
+			"storage_actual_capacity_free_bytes",
+			"storage_actual_capacity_usage_bytes",
+			"storage_cluster_iops_read",
+			"storage_cluster_iops_write",
+			"storage_cluster_throughput_read",
+			"storage_cluster_throughput_write",
+			"storage_volume_pool_bytes",
+			"storage_image_pool_bytes",
+		}, "|")
+		expr := fmt.Sprintf(`{__name__=~"%s"}`, storageMetrics)
+		result, err = doReq("POST", fmt.Sprintf("%s/emla/openapi/v1/%s/metrics/query", serviceURL, projectID),
+			map[string]interface{}{"expr": expr, "time": time.Now().Unix()})
+
+	// -- Dashboard overview (official ECF 6.2.1 metric names from Section 15.1.4.2) --
+	case "get_dashboard_overview":
+		dashMetrics := strings.Join([]string{
+			"dashboard_instances_state",
+			"dashboard_instances_vcpu_usage",
+			"dashboard_instances_memory_usage",
+			"dashboard_instances_volumes_usage",
+			"dashboard_control_plane_service_health",
+			"dashboard_storage_service_health",
+			"dashboard_node_state_total",
+			"dashboard_node_state_online",
+			"dashboard_cpu_total",
+			"dashboard_cpu_usage",
+			"dashboard_cpu_free",
+			"dashboard_memory_total",
+			"dashboard_memory_usage",
+			"dashboard_memory_free",
+			"dashboard_storage_total",
+			"dashboard_storage_usage",
+			"dashboard_storage_free",
+		}, "|")
+		expr := fmt.Sprintf(`{__name__=~"%s"}`, dashMetrics)
+		result, err = doReq("POST", fmt.Sprintf("%s/emla/openapi/v1/%s/metrics/query", serviceURL, projectID),
+			map[string]interface{}{"expr": expr, "time": time.Now().Unix()})
+
+	// -- All services health check (comprehensive, all 42 service metrics) --
+	case "check_all_services_health":
+		allMetrics := strings.Join([]string{
+			"service_control_api_state",
+			"service_control_scheduler_state",
+			"service_control_management_state",
+			"service_compute_api_state",
+			"service_compute_management_state",
+			"service_compute_state",
+			"service_compute_scheduler_state",
+			"service_network_vnc_state",
+			"service_network_api_state",
+			"service_network_metadata_state",
+			"service_network_virtual_switch_state",
+			"service_network_dhcp_state",
+			"service_network_l3_state",
+			"service_network_lb_state",
+			"service_authentication_api_state",
+			"service_image_management_state",
+			"service_virtualization_management_state",
+			"service_hostha_state",
+			"service_rabbitmq_state",
+			"service_database_state",
+			"service_automation_center_state",
+			"service_time_synchronization_state",
+			"service_cloud_console_state",
+			"service_cloud_automation_state",
+			"service_high_performance_cache_state",
+			"service_block_storage_api_state",
+			"service_block_storage_scheduler_state",
+			"service_block_storage_state",
+			"service_block_storage_backup_state",
+			"service_monitoring_api_state",
+			"service_monitoring_alert_api_state",
+			"service_monitoring_storage_api_state",
+			"service_log_collection_state",
+			"service_orchestration_api_state",
+			"service_data_protection_state",
 			"service_billing_api_state",
 			"service_object_storage_api_state",
-			"service_dns_api_state",
-			"service_vpn_api_state",
-			"service_firewall_api_state",
-			"service_key_manager_api_state",
-		}
-		metricsReq := map[string]interface{}{
-			"metrics_filter": allServiceMetrics,
-			"time":           time.Now().Unix(),
-		}
-		result, err = doReq("POST", fmt.Sprintf("%s/api/ecms/control_plane/metrics/query", serviceURL), metricsReq)
+			"service_container_cluster_management_api_state",
+		}, "|")
+		expr := fmt.Sprintf(`{__name__=~"%s"}`, allMetrics)
+		result, err = doReq("POST", fmt.Sprintf("%s/emla/openapi/v1/%s/metrics/query", serviceURL, projectID),
+			map[string]interface{}{"expr": expr, "time": time.Now().Unix()})
 
 	// ==================== Metering Service Tools (ECF 6.2.1 Chapter 14) ====================
 
@@ -678,11 +761,219 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		return `{"status":"success"}`, nil
 	}
 	resultStr := string(result)
-	if len(resultStr) > 8000 {
-		logger.Log.Warnf("[SkillExecutor] Tool '%s' result truncated: %d bytes → 8000 bytes. Data loss may cause inaccurate AI responses.", toolName, len(resultStr))
-		resultStr = resultStr[:8000] + "...(truncated)"
-	}
+	resultStr = smartTruncateResult(toolName, resultStr, 30000)
 	return resultStr, nil
+}
+
+// preFilterAlerts extracts only essential fields from EMLA alert responses
+// to drastically reduce token usage (original alert JSON can be >65KB).
+// Keeps: id, alertNameCN, status, severity, startsAt, endsAt, group, summary
+func preFilterAlerts(result json.RawMessage, err error) json.RawMessage {
+	if err != nil || result == nil {
+		return result
+	}
+
+	// Try to parse the EMLA response format
+	var resp map[string]interface{}
+	if json.Unmarshal(result, &resp) != nil {
+		return result
+	}
+
+	// Look for items array in data.items or directly
+	var items []interface{}
+	if data, ok := resp["data"].(map[string]interface{}); ok {
+		if its, ok := data["items"].([]interface{}); ok {
+			items = its
+		}
+	}
+	if items == nil {
+		if its, ok := resp["items"].([]interface{}); ok {
+			items = its
+		}
+	}
+	if items == nil {
+		// Try as direct array
+		var arr []interface{}
+		if json.Unmarshal(result, &arr) == nil {
+			items = arr
+		}
+	}
+
+	if items == nil {
+		return result // Cannot parse, return as-is
+	}
+
+	// Extract only essential fields per alert
+	keepFields := map[string]bool{
+		"id": true, "alertNameCN": true, "alertname": true, "alertNameEN": true,
+		"status": true, "severity": true, "state": true,
+		"startsAt": true, "endsAt": true, "starts_at": true, "ends_at": true,
+		"group": true, "category": true, "summary": true, "description": true,
+		"resource": true, "rule": true, "namespace": true, "service": true, "instance": true,
+	}
+
+	compacted := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]interface{}); ok {
+			slim := make(map[string]interface{})
+			for k, v := range m {
+				if keepFields[k] {
+					slim[k] = v
+				}
+				// Also extract from nested labels/annotations
+				if k == "labels" || k == "annotations" {
+					if nested, ok := v.(map[string]interface{}); ok {
+						for nk, nv := range nested {
+							if keepFields[nk] {
+								slim[nk] = nv
+							}
+						}
+					}
+				}
+			}
+			compacted = append(compacted, slim)
+		}
+	}
+
+	// Rebuild response with compacted items + statistics
+	output := map[string]interface{}{
+		"_total_alerts": len(compacted),
+		"alerts":        compacted,
+	}
+	// Copy statistics if present
+	if data, ok := resp["data"].(map[string]interface{}); ok {
+		if stats, ok := data["statistics"]; ok {
+			output["statistics"] = stats
+		}
+	}
+	if stats, ok := resp["statistics"]; ok {
+		output["statistics"] = stats
+	}
+
+	result, _ = json.Marshal(output)
+	logger.Log.Infof("[PreFilter] Alerts compacted: %d items, output size: %d bytes", len(compacted), len(result))
+	return result
+}
+
+// smartTruncateResult intelligently truncates large API results.
+// For JSON arrays, it keeps all items but summarizes each to key fields.
+// For other large results, it truncates with a summary header.
+func smartTruncateResult(toolName string, resultStr string, maxBytes int) string {
+	if len(resultStr) <= maxBytes {
+		return resultStr
+	}
+
+	logger.Log.Warnf("[SkillExecutor] Tool '%s' result too large: %d bytes (limit %d). Applying smart truncation.", toolName, len(resultStr), maxBytes)
+
+	// Try to parse as JSON and intelligently reduce
+	var raw interface{}
+	if err := json.Unmarshal([]byte(resultStr), &raw); err == nil {
+		compacted := smartCompactJSON(raw, toolName)
+		compactedBytes, _ := json.Marshal(compacted)
+		compactedStr := string(compactedBytes)
+		if len(compactedStr) <= maxBytes {
+			logger.Log.Infof("[SkillExecutor] Smart compaction reduced '%s' result: %d → %d bytes", toolName, len(resultStr), len(compactedStr))
+			return compactedStr
+		}
+		// Still too large after compaction, truncate the compacted version
+		resultStr = compactedStr
+	}
+
+	// Final fallback: hard truncate with metadata
+	truncated := resultStr[:maxBytes]
+	summary := fmt.Sprintf("\n...[数据已截断: 原始 %d 字节, 显示前 %d 字节。请使用更精确的查询条件缩小范围]", len(resultStr), maxBytes)
+	return truncated + summary
+}
+
+// smartCompactJSON reduces JSON data size by keeping essential fields
+// for known resource types (servers, volumes, alerts, etc.)
+func smartCompactJSON(data interface{}, toolName string) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		// Look for common OpenStack list patterns: {"servers": [...], "volumes": [...], etc.}
+		for key, val := range v {
+			if arr, ok := val.([]interface{}); ok && len(arr) > 0 {
+				compactedArr := compactResourceArray(arr, key, toolName)
+				result := make(map[string]interface{})
+				result[key] = compactedArr
+				result["_total_count"] = len(arr)
+				// Copy non-array metadata fields (pagination links, etc.)
+				for k, kv := range v {
+					if k != key {
+						result[k] = kv
+					}
+				}
+				return result
+			}
+		}
+		return v
+	case []interface{}:
+		return compactResourceArray(v, "", toolName)
+	default:
+		return v
+	}
+}
+
+// compactResourceArray removes verbose nested fields from resource arrays
+func compactResourceArray(arr []interface{}, resourceKey, toolName string) []interface{} {
+	// Fields to keep for common resource types
+	keepFields := map[string][]string{
+		"servers":       {"id", "name", "status", "OS-EXT-STS:vm_state", "OS-EXT-STS:power_state", "created", "updated", "tenant_id", "hostId", "flavor", "addresses", "metadata"},
+		"volumes":       {"id", "name", "status", "size", "volume_type", "created_at", "availability_zone", "attachments", "bootable"},
+		"networks":      {"id", "name", "status", "subnets", "provider:network_type", "shared", "router:external"},
+		"subnets":       {"id", "name", "cidr", "gateway_ip", "network_id", "enable_dhcp", "ip_version"},
+		"routers":       {"id", "name", "status", "external_gateway_info"},
+		"floatingips":   {"id", "floating_ip_address", "fixed_ip_address", "status", "port_id", "router_id"},
+		"security_groups": {"id", "name", "description", "security_group_rules"},
+		"loadbalancers": {"id", "name", "vip_address", "operating_status", "provisioning_status", "provider"},
+		"images":        {"id", "name", "status", "size", "min_disk", "min_ram", "created_at"},
+		"flavors":       {"id", "name", "vcpus", "ram", "disk"},
+	}
+
+	// Determine which fields to keep
+	fields, hasFilter := keepFields[resourceKey]
+	if !hasFilter {
+		// Try to infer from tool name
+		switch {
+		case strings.Contains(toolName, "server") || strings.Contains(toolName, "compute"):
+			fields = keepFields["servers"]
+			hasFilter = true
+		case strings.Contains(toolName, "volume") || strings.Contains(toolName, "storage"):
+			fields = keepFields["volumes"]
+			hasFilter = true
+		case strings.Contains(toolName, "network"):
+			fields = keepFields["networks"]
+			hasFilter = true
+		case strings.Contains(toolName, "alert") || strings.Contains(toolName, "alarm"):
+			// Keep all fields for alerts - they're usually small and important
+			return arr
+		}
+	}
+
+	if !hasFilter {
+		return arr
+	}
+
+	fieldSet := make(map[string]bool)
+	for _, f := range fields {
+		fieldSet[f] = true
+	}
+
+	compacted := make([]interface{}, len(arr))
+	for i, item := range arr {
+		if m, ok := item.(map[string]interface{}); ok {
+			slim := make(map[string]interface{})
+			for k, v := range m {
+				if fieldSet[k] {
+					slim[k] = v
+				}
+			}
+			compacted[i] = slim
+		} else {
+			compacted[i] = item
+		}
+	}
+	return compacted
 }
 
 // executeZStack runs a tool against a ZStack cloud platform.
@@ -745,9 +1036,7 @@ func (se *SkillExecutor) executeZStack(p model.CloudPlatform, sessionID, toolNam
 		return `{"status":"success"}`, nil
 	}
 	resultStr := string(result)
-	if len(resultStr) > 8000 {
-		resultStr = resultStr[:8000] + "...(truncated)"
-	}
+	resultStr = smartTruncateResult(toolName, resultStr, 30000)
 	return resultStr, nil
 }
 
