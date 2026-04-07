@@ -2,7 +2,9 @@ package handler
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1015,6 +1017,8 @@ func (h *Handler) TestAIProvider(c *gin.Context) {
 
 // authenticateEasyStack obtains a Keystone token for an EasyStack platform.
 // Returns (token, error). Includes project scope for proper API access.
+// Uses resolveEasyStackServiceURL to construct the correct Keystone URL
+// instead of relying on p.AuthURL which may be stale or empty.
 func authenticateEasyStack(client *http.Client, p model.CloudPlatform) (string, error) {
 	domain := p.DomainName
 	if domain == "" {
@@ -1041,7 +1045,7 @@ func authenticateEasyStack(client *http.Client, p model.CloudPlatform) (string, 
 		},
 	}
 	authBody, _ := json.Marshal(authPayload)
-	keystoneURL := strings.TrimRight(p.AuthURL, "/") + "/v3/auth/tokens"
+	keystoneURL := resolveEasyStackServiceURL(p, "keystone") + "/v3/auth/tokens"
 	authReq, err := http.NewRequest("POST", keystoneURL, bytes.NewReader(authBody))
 	if err != nil {
 		return "", fmt.Errorf("create auth request: %w", err)
@@ -1063,30 +1067,140 @@ func authenticateEasyStack(client *http.Client, p model.CloudPlatform) (string, 
 	return token, nil
 }
 
+// authenticateEasyStackFull is like authenticateEasyStack but also extracts the ProjectID
+// from the Keystone token response body (token.project.id).
+// This enables GetResourceMonitor to work even when ProjectID is not stored in the DB.
+func authenticateEasyStackFull(client *http.Client, p model.CloudPlatform) (token string, projectID string, err error) {
+	domain := p.DomainName
+	if domain == "" {
+		domain = "Default"
+	}
+	authPayload := map[string]interface{}{
+		"auth": map[string]interface{}{
+			"identity": map[string]interface{}{
+				"methods": []string{"password"},
+				"password": map[string]interface{}{
+					"user": map[string]interface{}{
+						"name":     p.Username,
+						"password": p.Password,
+						"domain":   map[string]string{"name": domain},
+					},
+				},
+			},
+			"scope": map[string]interface{}{
+				"project": map[string]interface{}{
+					"name":   p.ProjectName,
+					"domain": map[string]string{"name": domain},
+				},
+			},
+		},
+	}
+	authBody, _ := json.Marshal(authPayload)
+	keystoneURL := resolveEasyStackServiceURL(p, "keystone") + "/v3/auth/tokens"
+	logger.Log.Infof("[authenticateEasyStackFull] POST %s (user=%s, project=%s)", keystoneURL, p.Username, p.ProjectName)
+	authReq, err := http.NewRequest("POST", keystoneURL, bytes.NewReader(authBody))
+	if err != nil {
+		return "", "", fmt.Errorf("create auth request: %w", err)
+	}
+	authReq.Header.Set("Content-Type", "application/json")
+	authResp, err := client.Do(authReq)
+	if err != nil {
+		return "", "", fmt.Errorf("auth request failed: %w", err)
+	}
+	defer authResp.Body.Close()
+	respBody, _ := io.ReadAll(authResp.Body)
+	if authResp.StatusCode != 200 && authResp.StatusCode != 201 {
+		return "", "", fmt.Errorf("auth failed (HTTP %d): %s", authResp.StatusCode, string(respBody[:min(len(respBody), 500)]))
+	}
+	token = authResp.Header.Get("X-Subject-Token")
+	if token == "" {
+		return "", "", fmt.Errorf("empty X-Subject-Token in response")
+	}
+	// Extract project ID from the token response body
+	var tokenResp struct {
+		Token struct {
+			Project struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"project"`
+		} `json:"token"`
+	}
+	if err := json.Unmarshal(respBody, &tokenResp); err == nil && tokenResp.Token.Project.ID != "" {
+		projectID = tokenResp.Token.Project.ID
+		logger.Log.Infof("[authenticateEasyStackFull] Extracted ProjectID=%s (name=%s) from token response", projectID, tokenResp.Token.Project.Name)
+	}
+	return token, projectID, nil
+}
+
 // authenticateZStack obtains a session token for a ZStack platform.
 // Returns (sessionId, error).
+// Supports both AccessKey HMAC signing (preferred) and plain password login.
 func authenticateZStack(client *http.Client, p model.CloudPlatform) (string, error) {
 	var loginPayload map[string]interface{}
+	var loginURL string
+	var method string
 
 	if p.AccessKeyID != "" && p.AccessKeySecret != "" {
+		// Use AccessKey HMAC authentication (consistent with SkillExecutor)
+		endpoint := strings.TrimRight(p.Endpoint, "/")
+		loginURL = endpoint + "/v1/accounts/login"
+		method = "POST"
+
+		ts := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT")
+		stringToSign := fmt.Sprintf("POST\n\napplication/json\n%s\n/v1/accounts/login", ts)
+		mac := hmacSHA256([]byte(p.AccessKeySecret), []byte(stringToSign))
+		sig := hex.EncodeToString(mac)
+
 		loginPayload = map[string]interface{}{
-			"logInByAccount": map[string]string{
-				"accountName": p.AccessKeyID,
-				"password":    p.AccessKeySecret,
+			"loginByAccessKey": map[string]string{
+				"accessKeyId":     p.AccessKeyID,
+				"accessKeySecret": sig,
 			},
 		}
-	} else if p.Username != "" && p.Password != "" {
-		loginPayload = map[string]interface{}{
-			"logInByAccount": map[string]string{
-				"accountName": p.Username,
-				"password":    p.Password,
-			},
+		loginBody, _ := json.Marshal(loginPayload)
+		req, err := http.NewRequest(method, loginURL, bytes.NewReader(loginBody))
+		if err != nil {
+			return "", fmt.Errorf("create login request: %w", err)
 		}
-	} else {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Date", ts)
+		req.Header.Set("Authorization", fmt.Sprintf("ZStack %s:%s", p.AccessKeyID, sig))
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("login request failed: %w", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode >= 400 {
+			return "", fmt.Errorf("ZStack HMAC login failed (HTTP %d): %s", resp.StatusCode, string(body))
+		}
+
+		var loginResp struct {
+			Inventory struct {
+				UUID string `json:"uuid"`
+			} `json:"inventory"`
+		}
+		if err := json.Unmarshal(body, &loginResp); err != nil {
+			return "", fmt.Errorf("parse ZStack login response: %w", err)
+		}
+		if loginResp.Inventory.UUID == "" {
+			return "", fmt.Errorf("empty session UUID from ZStack login")
+		}
+		return loginResp.Inventory.UUID, nil
+	}
+
+	// Fallback: plain password login
+	if p.Username == "" || p.Password == "" {
 		return "", fmt.Errorf("ZStack platform missing credentials")
 	}
 
-	loginURL := strings.TrimRight(p.Endpoint, "/") + "/zstack/v1/accounts/login"
+	loginURL = strings.TrimRight(p.Endpoint, "/") + "/zstack/v1/accounts/login"
+	loginPayload = map[string]interface{}{
+		"logInByAccount": map[string]string{
+			"accountName": p.Username,
+			"password":    p.Password,
+		},
+	}
 	loginBody, _ := json.Marshal(loginPayload)
 	req, err := http.NewRequest("PUT", loginURL, bytes.NewReader(loginBody))
 	if err != nil {
@@ -1118,6 +1232,13 @@ func authenticateZStack(client *http.Client, p model.CloudPlatform) (string, err
 	return loginResp.Inventory.UUID, nil
 }
 
+// hmacSHA256 computes HMAC-SHA256 of the message using the given key.
+func hmacSHA256(key, message []byte) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write(message)
+	return h.Sum(nil)
+}
+
 // resolveEasyStackServiceURL builds the correct service URL for a given OpenStack component.
 // Multi-domain mode: http://<component>.<BaseDomain> (e.g., http://nova.opsl2.svc.cluster.local)
 // Legacy mode: all services share the AuthURL.
@@ -1133,6 +1254,7 @@ func resolveEasyStackServiceURL(p model.CloudPlatform, component string) string 
 // Uses Nova API: GET /v2.1/servers/detail (per EasyStack API doc Section 4)
 func fetchEasyStackServers(client *http.Client, p model.CloudPlatform, token string) int {
 	if p.ProjectID == "" {
+		logger.Log.Warnf("EasyStack: fetchEasyStackServers skipped for %s: ProjectID is empty", p.Name)
 		return 0
 	}
 	novaURL := resolveEasyStackServiceURL(p, "nova")
@@ -1167,13 +1289,14 @@ func fetchEasyStackServers(client *http.Client, p model.CloudPlatform, token str
 }
 
 // fetchEasyStackVolumes fetches the total volume count from a connected EasyStack platform.
-// Uses Cinder API: GET /v2/{project_id}/volumes/detail (per EasyStack API doc Section 3)
+// Uses Cinder API: GET /v2/{project_id}/volumes (EasyStack does NOT support /detail suffix)
 func fetchEasyStackVolumes(client *http.Client, p model.CloudPlatform, token string) int {
 	if p.ProjectID == "" {
+		logger.Log.Warnf("EasyStack: fetchEasyStackVolumes skipped for %s: ProjectID is empty", p.Name)
 		return 0
 	}
 	cinderURL := resolveEasyStackServiceURL(p, "cinder")
-	volumesURL := fmt.Sprintf("%s/v2/%s/volumes/detail", cinderURL, p.ProjectID)
+	volumesURL := fmt.Sprintf("%s/v2/%s/volumes", cinderURL, p.ProjectID)
 	req, err := http.NewRequest("GET", volumesURL, nil)
 	if err != nil {
 		logger.Log.Warnf("EasyStack: create volumes request failed: %v", err)
@@ -1494,67 +1617,112 @@ func (h *Handler) GetResourceMonitor(c *gin.Context) {
 	// Note: For multi-domain EasyStack platforms, a custom DNS client is created per platform.
 	defaultClient := &http.Client{Timeout: 15 * time.Second}
 
-	for _, p := range platforms {
-		pr := PlatformResource{
-			ID:     p.ID,
-			Name:   p.Name,
-			Type:   p.Type,
-			Status: p.Status,
-		}
+	// Process platforms concurrently for better performance
+	type platformResult struct {
+		Resource PlatformResource
+		Firing   int
+		Resolved int
+		Alerts   []AlertItem
+	}
+	results := make([]platformResult, len(platforms))
+	var wg sync.WaitGroup
 
-		switch {
-		// ── EasyStack platform ──
-		case p.Status == "connected" && p.Type == "easystack" &&
-			p.AuthURL != "" && p.Username != "" && p.Password != "":
+	for i, p := range platforms {
+		wg.Add(1)
+		go func(idx int, plat model.CloudPlatform) {
+			defer wg.Done()
 
-			// Use custom DNS client for multi-domain mode (resolves *.BaseDomain → HostIP)
-			apiClient := agent.NewHTTPClientWithCustomDNS(p.HostIP, p.BaseDomain, 15*time.Second)
+			pr := PlatformResource{
+				ID:     plat.ID,
+				Name:   plat.Name,
+				Type:   plat.Type,
+				Status: plat.Status,
+			}
+			var firing, resolved int
+			var alerts []AlertItem
 
-			token, err := authenticateEasyStack(apiClient, p)
-			if err != nil {
-				logger.Log.Warnf("EasyStack auth failed for %s: %v", p.Name, err)
-				break
+			switch {
+			// ── EasyStack platform ──
+			// Accept both multi-domain (HostIP+BaseDomain) and legacy (AuthURL) modes
+			case plat.Status == "connected" && plat.Type == "easystack" &&
+				(plat.AuthURL != "" || (plat.HostIP != "" && plat.BaseDomain != "")) &&
+				plat.Username != "" && plat.Password != "":
+
+				logger.Log.Infof("[ResourceMonitor] Processing EasyStack platform %q (ID=%d, HostIP=%s, BaseDomain=%s, AuthURL=%s, ProjectID=%s)",
+					plat.Name, plat.ID, plat.HostIP, plat.BaseDomain, plat.AuthURL, plat.ProjectID)
+
+				// Use custom DNS client for multi-domain mode (resolves *.BaseDomain → HostIP)
+				apiClient := agent.NewHTTPClientWithCustomDNS(plat.HostIP, plat.BaseDomain, 15*time.Second)
+
+				token, projectID, err := authenticateEasyStackFull(apiClient, plat)
+				if err != nil {
+					logger.Log.Warnf("[ResourceMonitor] EasyStack auth failed for %s: %v", plat.Name, err)
+					break
+				}
+				logger.Log.Infof("[ResourceMonitor] EasyStack auth OK for %s, token=%s..., projectID=%s", plat.Name, token[:min(len(token), 12)], projectID)
+
+				// If ProjectID was not stored in DB, use the one from the auth response
+				if plat.ProjectID == "" && projectID != "" {
+					logger.Log.Infof("[ResourceMonitor] Platform %s has empty ProjectID in DB, using auth-derived: %s", plat.Name, projectID)
+					plat.ProjectID = projectID
+				}
+
+				// Fetch VMs (Nova API: GET /v2.1/servers/detail)
+				pr.VMCount = fetchEasyStackServers(apiClient, plat, token)
+				logger.Log.Infof("[ResourceMonitor] Platform %s: VMs=%d", plat.Name, pr.VMCount)
+
+				// Fetch Volumes (Cinder API: GET /v2/{project_id}/volumes/detail)
+				pr.VolumeCount = fetchEasyStackVolumes(apiClient, plat, token)
+				logger.Log.Infof("[ResourceMonitor] Platform %s: Volumes=%d", plat.Name, pr.VolumeCount)
+
+				// Fetch Alerts (ECMS API: GET /apis/monitoring/v1/ecms/alerts)
+				firing, resolved, alerts = fetchEasyStackAlerts(apiClient, plat, token, plat.Name)
+
+			// ── ZStack platform ──
+			case plat.Status == "connected" && plat.Type == "zstack" && plat.Endpoint != "":
+
+				sessionID, err := authenticateZStack(defaultClient, plat)
+				if err != nil {
+					logger.Log.Warnf("ZStack auth failed for %s: %v", plat.Name, err)
+					break
+				}
+
+				endpoint := strings.TrimRight(plat.Endpoint, "/")
+
+				// Fetch VMs (QueryVmInstance API)
+				pr.VMCount = fetchZStackVMs(defaultClient, endpoint, sessionID)
+
+				// Fetch Volumes (QueryVolume API)
+				pr.VolumeCount = fetchZStackVolumes(defaultClient, endpoint, sessionID)
+
+				// Fetch Alerts (QueryAlarm API)
+				firing, resolved, alerts = fetchZStackAlerts(defaultClient, endpoint, sessionID, plat.Name)
+
+			default:
+				// Platform skipped – log why for debugging
+				logger.Log.Warnf("[ResourceMonitor] Skipping platform %q (ID=%d): type=%s, status=%s, AuthURL=%q, HostIP=%q, BaseDomain=%q, Username=%q, HasPassword=%v, Endpoint=%q",
+					plat.Name, plat.ID, plat.Type, plat.Status, plat.AuthURL, plat.HostIP, plat.BaseDomain, plat.Username, plat.Password != "", plat.Endpoint)
 			}
 
-			// Fetch VMs (Nova API: GET /v2.1/servers/detail)
-			pr.VMCount = fetchEasyStackServers(apiClient, p, token)
-
-			// Fetch Volumes (Cinder API: GET /v2/{project_id}/volumes/detail)
-			pr.VolumeCount = fetchEasyStackVolumes(apiClient, p, token)
-
-			// Fetch Alerts (ECMS API: GET /apis/monitoring/v1/ecms/alerts)
-			f, r, alerts := fetchEasyStackAlerts(apiClient, p, token, p.Name)
-			firingAlerts += f
-			resolvedAlerts += r
-			alertList = append(alertList, alerts...)
-
-		// ── ZStack platform ──
-		case p.Status == "connected" && p.Type == "zstack" && p.Endpoint != "":
-
-			sessionID, err := authenticateZStack(defaultClient, p)
-			if err != nil {
-				logger.Log.Warnf("ZStack auth failed for %s: %v", p.Name, err)
-				break
+			results[idx] = platformResult{
+				Resource: pr,
+				Firing:   firing,
+				Resolved: resolved,
+				Alerts:   alerts,
 			}
+		}(i, p)
+	}
 
-			endpoint := strings.TrimRight(p.Endpoint, "/")
+	wg.Wait()
 
-			// Fetch VMs (QueryVmInstance API)
-			pr.VMCount = fetchZStackVMs(defaultClient, endpoint, sessionID)
-
-			// Fetch Volumes (QueryVolume API)
-			pr.VolumeCount = fetchZStackVolumes(defaultClient, endpoint, sessionID)
-
-			// Fetch Alerts (QueryAlarm API)
-			f, r, alerts := fetchZStackAlerts(defaultClient, endpoint, sessionID, p.Name)
-			firingAlerts += f
-			resolvedAlerts += r
-			alertList = append(alertList, alerts...)
-		}
-
-		totalVMs += pr.VMCount
-		totalVolumes += pr.VolumeCount
-		platformResources = append(platformResources, pr)
+	// Aggregate results from all platforms
+	for _, res := range results {
+		totalVMs += res.Resource.VMCount
+		totalVolumes += res.Resource.VolumeCount
+		firingAlerts += res.Firing
+		resolvedAlerts += res.Resolved
+		alertList = append(alertList, res.Alerts...)
+		platformResources = append(platformResources, res.Resource)
 	}
 
 	// 3. Component health – derive from platform connectivity + internal services
@@ -1799,20 +1967,16 @@ func (h *Handler) TestCloudPlatform(c *gin.Context) {
 		return
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	// Use custom DNS client for multi-domain mode; falls back to plain client otherwise
+	client := agent.NewHTTPClientWithCustomDNS(platform.HostIP, platform.BaseDomain, 15*time.Second)
 	var testErr error
 
 	switch platform.Type {
 	case "easystack":
-		// EasyStack: call Keystone v3 token endpoint
-		// Resolve Keystone URL: prefer HostIP+BaseDomain, fall back to AuthURL
-		var keystoneBase string
-		if platform.HostIP != "" && platform.BaseDomain != "" {
-			keystoneBase = fmt.Sprintf("http://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
-		} else if platform.AuthURL != "" {
-			keystoneBase = strings.TrimRight(platform.AuthURL, "/")
-		}
-		if keystoneBase == "" || platform.Username == "" || platform.Password == "" {
+		// EasyStack: call Keystone v3 token endpoint with project scope
+		// Use resolveEasyStackServiceURL for correct multi-domain / legacy URL resolution
+		keystoneBase := resolveEasyStackServiceURL(platform, "keystone")
+		if keystoneBase == "" || (platform.Username == "" || platform.Password == "") {
 			response.BadRequest(c, "EasyStack 平台缺少认证地址(IP+根域名 或 AuthURL)、Username 或 Password")
 			return
 		}
@@ -1820,6 +1984,10 @@ func (h *Handler) TestCloudPlatform(c *gin.Context) {
 		domain := platform.DomainName
 		if domain == "" {
 			domain = "Default"
+		}
+		projectName := platform.ProjectName
+		if projectName == "" {
+			projectName = "admin"
 		}
 		authPayload := map[string]interface{}{
 			"auth": map[string]interface{}{
@@ -1831,6 +1999,12 @@ func (h *Handler) TestCloudPlatform(c *gin.Context) {
 							"password": platform.Password,
 							"domain":   map[string]string{"name": domain},
 						},
+					},
+				},
+				"scope": map[string]interface{}{
+					"project": map[string]interface{}{
+						"name":   projectName,
+						"domain": map[string]string{"name": domain},
 					},
 				},
 			},
@@ -1848,12 +2022,35 @@ func (h *Handler) TestCloudPlatform(c *gin.Context) {
 			break
 		}
 		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == 201 || resp.StatusCode == 200 {
-			repository.DB.Model(&platform).Update("status", "connected")
-			response.Success(c, gin.H{"status": "connected", "message": "EasyStack Keystone 认证成功"})
+			// Extract ProjectID from token response and auto-fill into DB
+			updates := map[string]interface{}{"status": "connected"}
+			var tokenResp struct {
+				Token struct {
+					Project struct {
+						ID   string `json:"id"`
+						Name string `json:"name"`
+					} `json:"project"`
+				} `json:"token"`
+			}
+			if err := json.Unmarshal(respBody, &tokenResp); err == nil && tokenResp.Token.Project.ID != "" {
+				updates["project_id"] = tokenResp.Token.Project.ID
+				logger.Log.Infof("[TestCloudPlatform] EasyStack %s: auto-filled ProjectID=%s (project=%s)",
+					platform.Name, tokenResp.Token.Project.ID, tokenResp.Token.Project.Name)
+			}
+			// Also auto-generate AuthURL if missing but HostIP+BaseDomain are set
+			if platform.AuthURL == "" && platform.HostIP != "" && platform.BaseDomain != "" {
+				updates["auth_url"] = fmt.Sprintf("http://keystone.%s", strings.TrimLeft(platform.BaseDomain, "."))
+			}
+			repository.DB.Model(&platform).Updates(updates)
+			msg := "EasyStack Keystone 认证成功"
+			if pid, ok := updates["project_id"]; ok {
+				msg += fmt.Sprintf("，已自动获取 Project ID: %s", pid)
+			}
+			response.Success(c, gin.H{"status": "connected", "message": msg})
 			return
 		}
-		respBody, _ := io.ReadAll(resp.Body)
 		testErr = fmt.Errorf("认证失败 (HTTP %d): %s", resp.StatusCode, string(respBody))
 
 	case "zstack":

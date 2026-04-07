@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jibiao-ai/opsgenie-ai/internal/model"
 	"github.com/jibiao-ai/opsgenie-ai/pkg/logger"
@@ -27,10 +28,11 @@ type SkillExecutor struct {
 }
 
 type platformToken struct {
-	tokenType string // "keystone" or "zstack"
-	token     string // X-Auth-Token (EasyStack) or session ID (ZStack)
-	expiresAt time.Time
-	platform  model.CloudPlatform
+	tokenType    string // "keystone" or "zstack"
+	token        string // X-Auth-Token (EasyStack) or session ID (ZStack)
+	expiresAt    time.Time
+	platform     model.CloudPlatform
+	passwordHash string // track password to invalidate cache on credential change
 }
 
 // NewSkillExecutor creates a new executor.
@@ -60,11 +62,20 @@ func (se *SkillExecutor) getHTTPClient(p model.CloudPlatform) *http.Client {
 	return client
 }
 
+// passwordFingerprint returns a short hash of the platform credentials.
+// If the credentials change, the cached token is invalidated.
+func passwordFingerprint(p model.CloudPlatform) string {
+	h := sha256.Sum256([]byte(p.Password + p.AccessKeySecret + p.Username))
+	return hex.EncodeToString(h[:8])
+}
+
 // Authenticate obtains a valid token for the given cloud platform.
 // The result is cached so subsequent calls within the validity period are fast.
+// If the platform password changes, the cache is automatically invalidated.
 func (se *SkillExecutor) Authenticate(p model.CloudPlatform) (string, error) {
+	fp := passwordFingerprint(p)
 	se.mu.RLock()
-	if cached, ok := se.tokens[p.ID]; ok && time.Now().Before(cached.expiresAt) {
+	if cached, ok := se.tokens[p.ID]; ok && time.Now().Before(cached.expiresAt) && cached.passwordHash == fp {
 		se.mu.RUnlock()
 		return cached.token, nil
 	}
@@ -90,10 +101,11 @@ func (se *SkillExecutor) Authenticate(p model.CloudPlatform) (string, error) {
 
 	se.mu.Lock()
 	se.tokens[p.ID] = &platformToken{
-		tokenType: tokenType,
-		token:     token,
-		expiresAt: time.Now().Add(5 * time.Hour), // EasyStack token expires in ~6h, refresh at 5h
-		platform:  p,
+		tokenType:    tokenType,
+		token:        token,
+		expiresAt:    time.Now().Add(5 * time.Hour), // EasyStack token expires in ~6h, refresh at 5h
+		platform:     p,
+		passwordHash: fp,
 	}
 	se.mu.Unlock()
 
@@ -358,7 +370,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 		result, err = doReq("GET", fmt.Sprintf("%s/v2/images", serviceURL), nil)
 	// Storage
 	case "list_volumes":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail", serviceURL, projectID), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes", serviceURL, projectID), nil)
 	case "create_volume":
 		volParams := map[string]interface{}{"name": getString("name"), "size": getInt("size")}
 		if vt := getString("volume_type"); vt != "" {
@@ -383,7 +395,7 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			return `{"status":"success","message":"云硬盘扩容命令已发送"}`, nil
 		}
 	case "list_volume_snapshots":
-		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/snapshots/detail", serviceURL, projectID), nil)
+		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/snapshots", serviceURL, projectID), nil)
 	// -- Volume types (per EasyStack API doc Section 3.1) --
 	case "list_volume_types":
 		result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/types", serviceURL, projectID), nil)
@@ -391,11 +403,12 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 	case "get_volume_detail":
 		volID := getString("volume_id")
 		if volID != "" {
-			result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail?id=%s", serviceURL, projectID, volID), nil)
+			result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/%s", serviceURL, projectID, volID), nil)
 		} else {
-			result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes/detail", serviceURL, projectID), nil)
+			result, err = doReq("GET", fmt.Sprintf("%s/v2/%s/volumes", serviceURL, projectID), nil)
 		}
 	// -- Storage pools (per EasyStack API doc Section 4.5 interface 2) --
+	// Note: scheduler-stats is a Cinder v3 endpoint; other Cinder calls use v2
 	case "get_storage_pools":
 		result, err = doReq("GET", fmt.Sprintf("%s/v3/%s/scheduler-stats/get_pools?detail=true", serviceURL, projectID), nil)
 	// -- Attach volume to server (per EasyStack API doc Section 4.3) --
@@ -440,17 +453,20 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 			map[string]interface{}{"security_group": map[string]string{"name": getString("name"), "description": getString("description")}})
 	case "create_security_group_rule":
 		ruleParams := map[string]interface{}{"security_group_id": getString("security_group_id"), "direction": getString("direction")}
-		if p := getString("protocol"); p != "" {
-			ruleParams["protocol"] = p
+		if proto := getString("protocol"); proto != "" {
+			ruleParams["protocol"] = proto
 		}
-		if min := getInt("port_range_min"); min > 0 {
-			ruleParams["port_range_min"] = min
+		if portMin := getInt("port_range_min"); portMin > 0 {
+			ruleParams["port_range_min"] = portMin
 		}
-		if max := getInt("port_range_max"); max > 0 {
-			ruleParams["port_range_max"] = max
+		if portMax := getInt("port_range_max"); portMax > 0 {
+			ruleParams["port_range_max"] = portMax
 		}
 		result, err = doReq("POST", fmt.Sprintf("%s/v2.0/security-group-rules", serviceURL),
 			map[string]interface{}{"security_group_rule": ruleParams})
+	// Ports
+	case "list_ports":
+		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/ports", serviceURL), nil)
 	// LB
 	case "list_loadbalancers":
 		result, err = doReq("GET", fmt.Sprintf("%s/v2.0/lbaas/loadbalancers", serviceURL), nil)
@@ -770,12 +786,16 @@ func (se *SkillExecutor) executeEasyStack(p model.CloudPlatform, token, toolName
 // Keeps: id, alertNameCN, status, severity, startsAt, endsAt, group, summary
 func preFilterAlerts(result json.RawMessage, err error) json.RawMessage {
 	if err != nil || result == nil {
+		if err != nil {
+			logger.Log.Warnf("[PreFilter] Skipping alert pre-filter due to error: %v", err)
+		}
 		return result
 	}
 
 	// Try to parse the EMLA response format
 	var resp map[string]interface{}
-	if json.Unmarshal(result, &resp) != nil {
+	if parseErr := json.Unmarshal(result, &resp); parseErr != nil {
+		logger.Log.Warnf("[PreFilter] Failed to parse alerts JSON for pre-filtering: %v", parseErr)
 		return result
 	}
 
@@ -879,9 +899,16 @@ func smartTruncateResult(toolName string, resultStr string, maxBytes int) string
 		resultStr = compactedStr
 	}
 
-	// Final fallback: hard truncate with metadata
-	truncated := resultStr[:maxBytes]
-	summary := fmt.Sprintf("\n...[数据已截断: 原始 %d 字节, 显示前 %d 字节。请使用更精确的查询条件缩小范围]", len(resultStr), maxBytes)
+	// Final fallback: hard truncate with metadata (UTF-8 safe)
+	truncated := resultStr
+	if len(truncated) > maxBytes {
+		// Find the last valid UTF-8 boundary at or before maxBytes
+		truncated = truncated[:maxBytes]
+		for !utf8.ValidString(truncated) && len(truncated) > 0 {
+			truncated = truncated[:len(truncated)-1]
+		}
+	}
+	summary := fmt.Sprintf("\n...[数据已截断: 原始 %d 字节, 显示前 %d 字节。请使用更精确的查询条件缩小范围]", len(resultStr), len(truncated))
 	return truncated + summary
 }
 

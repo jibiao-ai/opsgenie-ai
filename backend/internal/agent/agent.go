@@ -165,7 +165,8 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 		}
 		if agentModel.MaxTokens > 0 {
 			if isSiliconFlow {
-				reqBody["max_tokens"] = agentModel.MaxTokens
+				// SiliconFlow uses "max_new_tokens" instead of "max_tokens"
+				reqBody["max_new_tokens"] = agentModel.MaxTokens
 			} else {
 				reqBody["max_tokens"] = agentModel.MaxTokens
 			}
@@ -280,13 +281,13 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 			messages = append(messages, ChatMessage{Role: "assistant", Content: content})
 			messages = append(messages, ChatMessage{
 				Role:    "user",
-				Content: "你的回答被截断了，请从截断处继续完成回答。不要重复已经输出的内容，直接从断点处继续。",
+				Content: "你的回答被截断了，请从截断处继续完成回答。不要重复已经输出的内容，直接从断点处继续。如果剩余内容不多，请尽快给出结论和可信度评分。",
 			})
 
-			// Try up to 2 continuations
+			// Try up to 5 continuations
 			var fullContent strings.Builder
 			fullContent.WriteString(content)
-			for contIdx := 0; contIdx < 2; contIdx++ {
+			for contIdx := 0; contIdx < 5; contIdx++ {
 				contReqBody := map[string]interface{}{
 					"model":    modelName,
 					"messages": messages,
@@ -315,17 +316,25 @@ func (a *Agent) Chat(agentModel model.Agent, history []ChatMessage, userMsg stri
 				}
 				contContent := contResp.Choices[0].Message.Content
 				fullContent.WriteString(contContent)
-				logger.Log.Infof("[Chat] Continuation %d added %d chars, total=%d", contIdx+1, len(contContent), fullContent.Len())
+				logger.Log.Infof("[Chat] Continuation %d/%d added %d chars, total=%d", contIdx+1, 5, len(contContent), fullContent.Len())
 
 				if contResp.Choices[0].FinishReason != "length" {
 					break // Response is complete
 				}
 				// Still truncated, append and ask to continue again
 				messages = append(messages, ChatMessage{Role: "assistant", Content: contContent})
-				messages = append(messages, ChatMessage{
-					Role:    "user",
-					Content: "继续完成回答，不要重复已输出内容。",
-				})
+				if contIdx < 3 {
+					messages = append(messages, ChatMessage{
+						Role:    "user",
+						Content: "继续完成回答，不要重复已输出内容。",
+					})
+				} else {
+					// Last attempts: ask for a quick conclusion
+					messages = append(messages, ChatMessage{
+						Role:    "user",
+						Content: "回答即将达到长度上限。请立即总结剩余要点，给出结论和可信度评分（📊 可信度：X/10），不再展开详细数据。",
+					})
+				}
 			}
 			content = fullContent.String()
 		}

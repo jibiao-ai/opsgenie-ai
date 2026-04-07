@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +14,10 @@ import (
 	"github.com/jibiao-ai/opsgenie-ai/pkg/logger"
 )
 
-// Client is the EasyStack API client based on ECF 6.2.1
+// Deprecated: Client is the legacy EasyStack API client.
+// New code should use agent.SkillExecutor which supports multi-domain endpoint
+// resolution (HostIP + BaseDomain) and per-platform HTTP clients with custom DNS.
+// This client is retained only for backward compatibility and will be removed in a future version.
 type Client struct {
 	cfg        config.EasyStackConfig
 	httpClient *http.Client
@@ -308,9 +312,9 @@ func (c *Client) ListKeypairs() (json.RawMessage, error) {
 
 // ==================== Block Storage (Cinder) APIs ====================
 
-// ListVolumes lists all volumes - GET /v2/{project_id}/volumes/detail
+// ListVolumes lists all volumes - GET /v2/{project_id}/volumes
 func (c *Client) ListVolumes() (json.RawMessage, error) {
-	url := fmt.Sprintf("%s/v2/%s/volumes/detail", c.cfg.AuthURL, c.cfg.ProjectID)
+	url := fmt.Sprintf("%s/v2/%s/volumes", c.cfg.AuthURL, c.cfg.ProjectID)
 	body, status, err := c.doRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -348,9 +352,9 @@ func (c *Client) DeleteVolume(volumeID string) error {
 	return nil
 }
 
-// ExtendVolume extends a volume - POST /v3/{project_id}/volumes/{volume_id}/action
+// ExtendVolume extends a volume - POST /v2/{project_id}/volumes/{volume_id}/action
 func (c *Client) ExtendVolume(volumeID string, newSize int) error {
-	url := fmt.Sprintf("%s/v3/%s/volumes/%s/action", c.cfg.AuthURL, c.cfg.ProjectID, volumeID)
+	url := fmt.Sprintf("%s/v2/%s/volumes/%s/action", c.cfg.AuthURL, c.cfg.ProjectID, volumeID)
 	reqBody := map[string]interface{}{
 		"os-extend": map[string]int{"new_size": newSize},
 	}
@@ -681,20 +685,21 @@ func (c *Client) QueryMetrics(expr string, start, end, step int64) (json.RawMess
 	return body, nil
 }
 
-// ListAlerts lists alerts from the EasyStack observable service.
-// Uses GET /v1/{project_id}/alerts (ECF 6.2.1 API docs).
-// Optional query parameters: all_tenants, categories, states, severities, start, end.
+// ListAlerts lists alerts from the EasyStack ECMS alert API.
+// Uses GET /apis/monitoring/v1/ecms/alerts (Prometheus-compatible ECMS endpoint).
+// Optional query parameters: alerts_status (unresolved/resolved), severity (critical/warning/info).
 // Response format: { "code": 0, "data": { "statistics": {...}, "items": [...] } }
-func (c *Client) ListAlerts(states, categories, severities string) (json.RawMessage, error) {
-	url := fmt.Sprintf("%s/v1/%s/alerts?all_tenants=true", c.cfg.AuthURL, c.cfg.ProjectID)
-	if states != "" {
-		url += "&states=" + states
+func (c *Client) ListAlerts(alertsStatus, category, severity string) (json.RawMessage, error) {
+	url := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts", c.cfg.AuthURL)
+	var params []string
+	if alertsStatus != "" {
+		params = append(params, "alerts_status="+alertsStatus)
 	}
-	if categories != "" {
-		url += "&categories=" + categories
+	if severity != "" {
+		params = append(params, "severity="+severity)
 	}
-	if severities != "" {
-		url += "&severities=" + severities
+	if len(params) > 0 {
+		url += "?" + strings.Join(params, "&")
 	}
 	body, status, err := c.doRequest("GET", url, nil)
 	if err != nil {

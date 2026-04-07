@@ -289,6 +289,19 @@ function PlatformModal({ open, onClose, onSaved, editPlatform }) {
                   />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">
+                  Project ID
+                  <span className="text-xs text-gray-400 ml-1">(测试连接时自动获取，也可手动填写)</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.project_id}
+                  onChange={(e) => setForm({ ...form, project_id: e.target.value })}
+                  placeholder="测试连接后自动填入，如 4b3634c206414deb85e65c292b78951d"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 outline-none font-mono"
+                />
+              </div>
             </>
           )}
 

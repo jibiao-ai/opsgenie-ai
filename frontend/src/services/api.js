@@ -2,6 +2,11 @@ import axios from 'axios';
 
 const API_BASE = '/api';
 
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+const RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504];
+
 const api = axios.create({
   baseURL: API_BASE,
   timeout: 120000,
@@ -14,18 +19,42 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  // Track retry count in config
+  if (config.__retryCount === undefined) {
+    config.__retryCount = 0;
+  }
   return config;
 });
 
-// Response interceptor
+// Response interceptor with retry logic
 api.interceptors.response.use(
   (response) => response.data,
-  (error) => {
+  async (error) => {
+    const config = error.config;
+
+    // Don't retry on 401 (auth failure) — redirect to login
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
+      return Promise.reject(error.response?.data || error);
     }
+
+    // Retry on network errors or retryable HTTP status codes
+    const isRetryable =
+      !error.response || // network error (no response)
+      RETRYABLE_STATUS_CODES.includes(error.response?.status);
+
+    if (isRetryable && config && config.__retryCount < MAX_RETRIES) {
+      config.__retryCount += 1;
+      const delay = RETRY_DELAY_MS * config.__retryCount; // linear backoff
+      console.warn(
+        `[API] Request failed (${error.response?.status || 'network error'}), retrying (${config.__retryCount}/${MAX_RETRIES}) in ${delay}ms: ${config.url}`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return api(config);
+    }
+
     return Promise.reject(error.response?.data || error);
   }
 );

@@ -95,20 +95,25 @@ func (s *ChatService) SendMessage(conversationID, userID uint, content string, c
 		return nil, nil, err
 	}
 
-	// Get conversation history
+	// Get conversation history (last 20 messages, ordered by creation time)
 	var historyMsgs []model.Message
 	repository.DB.Where("conversation_id = ? AND id < ?", conversationID, userMsg.ID).
 		Order("created_at ASC").
 		Limit(20). // Keep last 20 messages for context
 		Find(&historyMsgs)
 
-	// Convert to agent chat messages
+	// Convert to agent chat messages, preserving tool_calls data
 	var history []agentpkg.ChatMessage
 	for _, m := range historyMsgs {
-		history = append(history, agentpkg.ChatMessage{
+		cm := agentpkg.ChatMessage{
 			Role:    m.Role,
 			Content: m.Content,
-		})
+		}
+		// Restore tool_calls JSON if present in the stored message
+		if m.ToolCalls != "" {
+			cm.ToolCalls = json.RawMessage(m.ToolCalls)
+		}
+		history = append(history, cm)
 	}
 
 	// Call agent
@@ -316,39 +321,22 @@ func (s *ChatService) GetUsers() ([]model.User, error) {
 	return users, err
 }
 
-// CreateUser creates a new user
+// CreateUser creates a new user.
+// Delegates to service.CreateUser which handles password validation+hashing.
 func (s *ChatService) CreateUser(user *model.User) error {
-	// Hash password only if non-empty and not already a bcrypt hash
-	if user.Password != "" && !isBcryptHash(user.Password) {
-		hashed, err := HashPassword(user.Password)
-		if err != nil {
-			return err
-		}
-		user.Password = hashed
-	}
-	return repository.DB.Create(user).Error
+	return CreateUser(user)
 }
 
-// UpdateUser updates a user
+// UpdateUser updates a user.
+// Delegates to service.UpdateUser which handles password validation+hashing.
 func (s *ChatService) UpdateUser(user *model.User) error {
-	updates := map[string]interface{}{
-		"email": user.Email,
-		"role":  user.Role,
-	}
-	// Hash password only if non-empty and not already a bcrypt hash
-	if user.Password != "" && !isBcryptHash(user.Password) {
-		hashed, err := HashPassword(user.Password)
-		if err != nil {
-			return err
-		}
-		updates["password"] = hashed
-	}
-	return repository.DB.Model(user).Updates(updates).Error
+	return UpdateUser(user)
 }
 
-// DeleteUser deletes a user
+// DeleteUser deletes a user.
+// Delegates to service.DeleteUser.
 func (s *ChatService) DeleteUser(id uint) error {
-	return repository.DB.Delete(&model.User{}, id).Error
+	return DeleteUser(id)
 }
 
 // TaskLog helpers

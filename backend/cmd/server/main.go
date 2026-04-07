@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jibiao-ai/opsgenie-ai/internal/agent"
 	"github.com/jibiao-ai/opsgenie-ai/internal/config"
-	"github.com/jibiao-ai/opsgenie-ai/internal/easystack"
 	"github.com/jibiao-ai/opsgenie-ai/internal/handler"
 	"github.com/jibiao-ai/opsgenie-ai/internal/middleware"
 	"github.com/jibiao-ai/opsgenie-ai/internal/mq"
@@ -45,16 +44,25 @@ func main() {
 
 		// Start consuming task queue
 		rabbitMQ.Consume(mq.QueueAgentTask, func(msg mq.TaskMessage) error {
-			logger.Log.Infof("Processing task: %s (type: %s)", msg.ID, msg.Type)
+			logger.Log.Infof("Processing task: %s (type: %s, agent_id: %d, user_id: %d)", msg.ID, msg.Type, msg.AgentID, msg.UserID)
+			switch msg.Type {
+			case "chat":
+				logger.Log.Infof("Task %s: chat task received, agent_id=%d", msg.ID, msg.AgentID)
+			case "workflow":
+				logger.Log.Infof("Task %s: workflow task received", msg.ID)
+			case "scheduled":
+				logger.Log.Infof("Task %s: scheduled task received", msg.ID)
+			default:
+				logger.Log.Warnf("Task %s: unknown task type '%s', skipping", msg.ID, msg.Type)
+			}
 			return nil
 		})
 	}
 
-	// Initialize EasyStack client
-	esClient := easystack.NewClient(cfg.EasyStack)
-
 	// Initialize AI Agent
-	aiAgent := agent.NewAgent(cfg.AI, esClient)
+	// Note: the legacy easystack.Client is no longer used; all cloud API calls
+	// go through SkillExecutor which supports multi-domain endpoint resolution.
+	aiAgent := agent.NewAgent(cfg.AI, nil)
 
 	// Initialize services
 	chatService := service.NewChatService(aiAgent)
