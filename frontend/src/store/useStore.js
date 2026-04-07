@@ -50,21 +50,115 @@ const useStore = create((set, get) => ({
     currentConversation: s.currentConversation?.id === id ? null : s.currentConversation,
   })),
 
-  // Messages
+  // Messages — per-conversation message cache
+  // { [conversationId]: Message[] }
+  messagesByConversation: {},
+  // Getter: messages for the current conversation
   messages: [],
   setMessages: (messagesOrFn) => {
+    const state = get();
+    const convId = state.currentConversation?.id;
+    if (!convId) {
+      // No conversation, just update the flat messages array
+      if (typeof messagesOrFn === 'function') {
+        set((s) => ({ messages: messagesOrFn(s.messages) }));
+      } else {
+        set({ messages: messagesOrFn });
+      }
+      return;
+    }
     if (typeof messagesOrFn === 'function') {
-      // Support functional updater: setMessages(prev => newMessages)
-      set((s) => ({ messages: messagesOrFn(s.messages) }));
+      set((s) => {
+        const prev = s.messagesByConversation[convId] || s.messages;
+        const next = messagesOrFn(prev);
+        return {
+          messages: s.currentConversation?.id === convId ? next : s.messages,
+          messagesByConversation: { ...s.messagesByConversation, [convId]: next },
+        };
+      });
     } else {
-      set({ messages: messagesOrFn });
+      set((s) => ({
+        messages: s.currentConversation?.id === convId ? messagesOrFn : s.messages,
+        messagesByConversation: { ...s.messagesByConversation, [convId]: messagesOrFn },
+      }));
     }
   },
-  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+  addMessage: (msg) => {
+    const state = get();
+    const convId = state.currentConversation?.id;
+    set((s) => {
+      const newMessages = [...s.messages, msg];
+      const newCache = convId
+        ? { ...s.messagesByConversation, [convId]: newMessages }
+        : s.messagesByConversation;
+      return { messages: newMessages, messagesByConversation: newCache };
+    });
+  },
+  // Add a message to a SPECIFIC conversation (may differ from current)
+  addMessageToConversation: (targetConvId, msg) => {
+    set((s) => {
+      const prevMsgs = s.messagesByConversation[targetConvId] || [];
+      const newMsgs = [...prevMsgs, msg];
+      const isCurrent = s.currentConversation?.id === targetConvId;
+      return {
+        messagesByConversation: { ...s.messagesByConversation, [targetConvId]: newMsgs },
+        messages: isCurrent ? newMsgs : s.messages,
+      };
+    });
+  },
+  // Set messages for a specific conversation (used when loading messages)
+  setMessagesForConversation: (convId, msgs) => {
+    set((s) => ({
+      messagesByConversation: { ...s.messagesByConversation, [convId]: msgs },
+      // If this is the current conversation, also update the flat messages
+      messages: s.currentConversation?.id === convId ? msgs : s.messages,
+    }));
+  },
+  // Functional update for messages of a specific conversation
+  updateMessagesForConversation: (targetConvId, updaterFn) => {
+    set((s) => {
+      const prevMsgs = s.messagesByConversation[targetConvId] || [];
+      const nextMsgs = updaterFn(prevMsgs);
+      const isCurrent = s.currentConversation?.id === targetConvId;
+      return {
+        messagesByConversation: { ...s.messagesByConversation, [targetConvId]: nextMsgs },
+        messages: isCurrent ? nextMsgs : s.messages,
+      };
+    });
+  },
+  // Switch to cached messages for a conversation
+  switchToConversationMessages: (convId) => {
+    set((s) => {
+      const cached = s.messagesByConversation[convId];
+      return cached !== undefined ? { messages: cached } : {};
+    });
+  },
 
-  // Loading states
+  // Loading states — per conversation
+  // { [conversationId]: boolean }
+  sendingByConversation: {},
+  // Legacy single flag (derived from current conversation)
   isSending: false,
-  setIsSending: (v) => set({ isSending: v }),
+  setIsSending: (v) => {
+    const state = get();
+    const convId = state.currentConversation?.id;
+    set((s) => ({
+      isSending: v,
+      sendingByConversation: convId
+        ? { ...s.sendingByConversation, [convId]: v }
+        : s.sendingByConversation,
+    }));
+  },
+  setIsSendingForConversation: (convId, v) => {
+    set((s) => ({
+      sendingByConversation: { ...s.sendingByConversation, [convId]: v },
+      // Update the flat flag if this is the current conversation
+      isSending: s.currentConversation?.id === convId ? v : s.isSending,
+    }));
+  },
+  isSendingForConversation: (convId) => {
+    return get().sendingByConversation[convId] || false;
+  },
 
   // Mode: 'agent' or 'workflow'
   mode: 'agent',

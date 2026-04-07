@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
   Send,
@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Zap,
   Cloud,
+  StopCircle,
 } from 'lucide-react';
 import useStore from '../store/useStore';
 import {
@@ -33,7 +34,10 @@ export default function ChatPage() {
     conversations, setConversations, currentConversation, setCurrentConversation,
     addConversation, removeConversation,
     messages, setMessages, addMessage,
+    addMessageToConversation, updateMessagesForConversation,
+    setMessagesForConversation, switchToConversationMessages,
     isSending, setIsSending,
+    sendingByConversation, setIsSendingForConversation,
     mode, setMode,
   } = useStore();
 
@@ -43,6 +47,12 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  // AbortController for canceling in-flight requests — keyed by conversationId
+  const abortControllersRef = useRef({});
+
+  // Track whether we just created a conversation to avoid reloading messages
+  const justCreatedConvRef = useRef(null);
 
   // Load agents and conversations on mount
   useEffect(() => {
@@ -58,7 +68,22 @@ export default function ChatPage() {
   // Load messages when conversation changes
   useEffect(() => {
     if (currentConversation) {
+      // If we just created this conversation, skip reloading (Bug 3 fix)
+      if (justCreatedConvRef.current === currentConversation.id) {
+        justCreatedConvRef.current = null;
+        return;
+      }
+      // Switch to cached messages immediately (prevents flash)
+      switchToConversationMessages(currentConversation.id);
+      // Then load fresh messages from server
       loadMessages(currentConversation.id);
+
+      // Sync the isSending flag for the current conversation
+      const convSending = sendingByConversation[currentConversation.id] || false;
+      if (convSending !== isSending) {
+        // Update flat isSending to match current conversation
+        useStore.setState({ isSending: convSending });
+      }
     } else {
       setMessages([]);
     }
@@ -119,7 +144,7 @@ export default function ChatPage() {
     try {
       const res = await getMessages(convId);
       if (res.code === 0) {
-        setMessages(res.data || []);
+        setMessagesForConversation(convId, res.data || []);
       }
     } catch (err) {
       console.error('Failed to load messages:', err);
@@ -134,6 +159,7 @@ export default function ChatPage() {
     try {
       const res = await createConversation(selectedAgent.id, '新会话');
       if (res.code === 0) {
+        justCreatedConvRef.current = res.data.id;
         addConversation(res.data);
         setCurrentConversation(res.data);
         setMessages([]);
@@ -147,6 +173,11 @@ export default function ChatPage() {
   const handleDeleteConversation = async (id, e) => {
     e.stopPropagation();
     try {
+      // Abort any in-flight request for this conversation
+      if (abortControllersRef.current[id]) {
+        abortControllersRef.current[id].abort();
+        delete abortControllersRef.current[id];
+      }
       await deleteConversation(id);
       removeConversation(id);
       toast.success('会话已删除');
@@ -155,8 +186,27 @@ export default function ChatPage() {
     }
   };
 
+  // Abort/stop the current AI response
+  const handleAbort = useCallback(() => {
+    const convId = currentConversation?.id;
+    if (!convId) return;
+    const controller = abortControllersRef.current[convId];
+    if (controller) {
+      controller.abort();
+      delete abortControllersRef.current[convId];
+    }
+    setIsSendingForConversation(convId, false);
+    // Add an indicator that the response was stopped (targeted to the conversation)
+    addMessageToConversation(convId, {
+      id: Date.now() + 2,
+      role: 'assistant',
+      content: '⏹ 响应已被用户中止。',
+      created_at: new Date().toISOString(),
+    });
+  }, [currentConversation?.id]);
+
   const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || isSending) return;
+    if ((!input.trim() && attachments.length === 0) || currentConvSending) return;
     // Wait for any uploading files
     if (attachments.some((a) => a.uploading)) {
       toast.error('请等待文件上传完成');
@@ -169,7 +219,7 @@ export default function ChatPage() {
 
     let convId = currentConversation?.id;
 
-    // Auto-create conversation if none selected
+    // Auto-create conversation if none selected (Bug 3 fix)
     if (!convId) {
       if (!selectedAgent) {
         toast.error('请先选择一个智能体');
@@ -178,9 +228,11 @@ export default function ChatPage() {
       try {
         const res = await createConversation(selectedAgent.id, input.slice(0, 30));
         if (res.code === 0) {
+          convId = res.data.id;
+          // Mark as just created to prevent useEffect from reloading messages
+          justCreatedConvRef.current = convId;
           addConversation(res.data);
           setCurrentConversation(res.data);
-          convId = res.data.id;
         } else {
           toast.error('创建会话失败');
           return;
@@ -196,7 +248,7 @@ export default function ChatPage() {
     const attachmentNames = attachments.filter((a) => a.uploaded).map((a) => a.name);
     setInput('');
     setAttachments([]);
-    setIsSending(true);
+    setIsSendingForConversation(convId, true);
 
     // Build display content for user message
     let displayContent = userContent;
@@ -204,22 +256,26 @@ export default function ChatPage() {
       displayContent += '\n📎 附件: ' + attachmentNames.join(', ');
     }
 
-    // Optimistic update - add user message immediately
+    // Optimistic update - add user message immediately (targeted to convId)
     const tempUserMsg = {
       id: Date.now(),
       role: 'user',
       content: displayContent,
       created_at: new Date().toISOString(),
     };
-    addMessage(tempUserMsg);
+    addMessageToConversation(convId, tempUserMsg);
+
+    // Create AbortController for this request (Bug 1 fix)
+    const abortController = new AbortController();
+    abortControllersRef.current[convId] = abortController;
 
     try {
-      const res = await sendMessage(convId, userContent || '请分析附件内容', uploadedPaths);
+      const res = await sendMessage(convId, userContent || '请分析附件内容', uploadedPaths, abortController.signal);
       if (res.code === 0 && res.data) {
         // Replace temp message with real one and add assistant response
         const userMessage = res.data.user_message;
         const assistantMessage = res.data.assistant_message;
-        setMessages((prev) => {
+        updateMessagesForConversation(convId, (prev) => {
           const filtered = Array.isArray(prev) ? prev.filter((m) => m.id !== tempUserMsg.id) : [];
           const result = [...filtered];
           if (userMessage) result.push(userMessage);
@@ -232,18 +288,24 @@ export default function ChatPage() {
         toast.error(res?.message || '发送失败');
       }
     } catch (err) {
+      // Don't show error if user intentionally aborted
+      if (err?.name === 'AbortError' || err?.name === 'CanceledError' || abortController.signal.aborted) {
+        console.log('Request aborted by user');
+        return;
+      }
       console.error('Send message error:', err);
       const errMsg = err?.message || err?.data?.message || '发送消息失败，请重试';
       toast.error(errMsg);
-      // Add error message
-      addMessage({
+      // Add error message (targeted to the correct conversation)
+      addMessageToConversation(convId, {
         id: Date.now() + 1,
         role: 'assistant',
         content: '抱歉，处理请求时出现错误。请检查网络连接后重试。\n\n错误详情: ' + errMsg,
         created_at: new Date().toISOString(),
       });
     } finally {
-      setIsSending(false);
+      delete abortControllersRef.current[convId];
+      setIsSendingForConversation(convId, false);
       inputRef.current?.focus();
     }
   };
@@ -325,6 +387,11 @@ export default function ChatPage() {
       handleSend();
     }
   };
+
+  // Check if current conversation is sending
+  const currentConvSending = currentConversation?.id
+    ? (sendingByConversation[currentConversation.id] || false)
+    : isSending;
 
   return (
     <div className="h-full flex flex-col p-4 gap-4 overflow-hidden">
@@ -445,40 +512,48 @@ export default function ChatPage() {
                 <p className="text-xs mt-1">点击"新会话"开始</p>
               </div>
             ) : (
-              conversations.map((conv) => (
-                <button
-                  key={conv.id}
-                  onClick={() => {
-                    setCurrentConversation(conv);
-                    // Sync the selected agent with the conversation's agent
-                    const convAgentId = conv.agent_id || conv.agent?.id;
-                    if (convAgentId && convAgentId !== selectedAgent?.id) {
-                      const matchedAgent = agents.find((a) => a.id === convAgentId);
-                      if (matchedAgent) setSelectedAgent(matchedAgent);
-                    }
-                  }}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-left transition group ${
-                    currentConversation?.id === conv.id
-                      ? 'bg-[#EEE9FB] border-r-2 border-[#513CC8]'
-                      : 'hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${currentConversation?.id === conv.id ? 'text-[#513CC8]' : 'text-gray-700'}`}>
-                      {conv.title || '新会话'}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {conv.agent?.name || '智能体'}
-                    </p>
-                  </div>
+              conversations.map((conv) => {
+                const convSending = sendingByConversation[conv.id] || false;
+                return (
                   <button
-                    onClick={(e) => handleDeleteConversation(conv.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition"
+                    key={conv.id}
+                    onClick={() => {
+                      setCurrentConversation(conv);
+                      // Sync the selected agent with the conversation's agent
+                      const convAgentId = conv.agent_id || conv.agent?.id;
+                      if (convAgentId && convAgentId !== selectedAgent?.id) {
+                        const matchedAgent = agents.find((a) => a.id === convAgentId);
+                        if (matchedAgent) setSelectedAgent(matchedAgent);
+                      }
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 text-left transition group ${
+                      currentConversation?.id === conv.id
+                        ? 'bg-[#EEE9FB] border-r-2 border-[#513CC8]'
+                        : 'hover:bg-gray-50'
+                    }`}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className={`text-sm font-medium truncate ${currentConversation?.id === conv.id ? 'text-[#513CC8]' : 'text-gray-700'}`}>
+                          {conv.title || '新会话'}
+                        </p>
+                        {convSending && (
+                          <Loader2 className="w-3 h-3 animate-spin text-[#513CC8] flex-shrink-0" />
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {conv.agent?.name || '智能体'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteConversation(conv.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </button>
-                </button>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -487,7 +562,7 @@ export default function ChatPage() {
         <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
           {/* 消息区 */}
           <div className="flex-1 overflow-y-auto px-4 py-6">
-            {messages.length === 0 ? (
+            {messages.length === 0 && !currentConvSending ? (
               <div className="flex flex-col items-center justify-center h-full text-gray-400">
                 <div className="w-16 h-16 bg-[#EEE9FB] rounded-2xl flex items-center justify-center mb-4">
                   <Bot className="w-8 h-8 text-[#513CC8]" />
@@ -558,7 +633,7 @@ export default function ChatPage() {
                 ))}
 
                 {/* Typing indicator */}
-                {isSending && (
+                {currentConvSending && (
                   <div className="flex justify-start">
                     <div>
                       <div className="flex items-center gap-1.5 mb-1 ml-1">
@@ -642,9 +717,10 @@ export default function ChatPage() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="输入消息... (Enter 发送，Shift+Enter 换行)"
+                  placeholder={currentConvSending ? '智能体正在响应中... 点击停止按钮可中止' : '输入消息... (Enter 发送，Shift+Enter 换行)'}
                   rows={1}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:ring-2 focus:ring-[#513CC8] focus:border-transparent outline-none text-sm transition-all"
+                  disabled={currentConvSending}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:ring-2 focus:ring-[#513CC8] focus:border-transparent outline-none text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ minHeight: '42px', maxHeight: '120px' }}
                   onInput={(e) => {
                     e.target.style.height = 'auto';
@@ -652,18 +728,26 @@ export default function ChatPage() {
                   }}
                 />
               </div>
-              <button
-                onClick={handleSend}
-                disabled={(!input.trim() && attachments.length === 0) || isSending}
-                className="px-5 py-2.5 bg-[#513CC8] hover:bg-[#4230A6] text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-              >
-                {isSending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
+              {/* Send button OR Stop button */}
+              {currentConvSending ? (
+                <button
+                  onClick={handleAbort}
+                  className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 shadow-sm"
+                  title="中止响应"
+                >
+                  <StopCircle className="w-4 h-4" />
+                  停止
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={(!input.trim() && attachments.length === 0)}
+                  className="px-5 py-2.5 bg-[#513CC8] hover:bg-[#4230A6] text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                >
                   <Send className="w-4 h-4" />
-                )}
-                发送
-              </button>
+                  发送
+                </button>
+              )}
             </div>
           </div>
         </div>

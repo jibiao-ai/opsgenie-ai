@@ -40,6 +40,11 @@ api.interceptors.response.use(
       return Promise.reject(error.response?.data || error);
     }
 
+    // Don't retry if the request was aborted by user (AbortController)
+    if (axios.isCancel(error) || error?.name === 'AbortError' || config?.signal?.aborted) {
+      return Promise.reject(error);
+    }
+
     // Retry on network errors or retryable HTTP status codes
     const isRetryable =
       !error.response || // network error (no response)
@@ -84,8 +89,8 @@ export const deleteConversation = (id) => api.delete(`/conversations/${id}`);
 // Messages
 export const getMessages = (conversationId) =>
   api.get(`/conversations/${conversationId}/messages`);
-export const sendMessage = (conversationId, content, attachments = []) =>
-  api.post(`/conversations/${conversationId}/messages`, { content, attachments });
+export const sendMessage = (conversationId, content, attachments = [], signal) =>
+  api.post(`/conversations/${conversationId}/messages`, { content, attachments }, { signal });
 
 // File Upload
 export const uploadFile = (file) => {

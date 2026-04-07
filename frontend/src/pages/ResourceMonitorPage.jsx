@@ -379,46 +379,92 @@ export default function ResourceMonitorPage() {
                   ))}
                 </div>
               ) : (data?.alerts && data.alerts.length > 0) ? (
-                <div className="space-y-2 max-h-80 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
-                  {data.alerts.map((alert, i) => (
-                    <div
-                      key={i}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${
-                        alert.state === 'firing'
-                          ? 'bg-red-50/50 border-red-100 hover:bg-red-50'
-                          : 'bg-emerald-50/50 border-emerald-100 hover:bg-emerald-50'
-                      }`}
-                    >
-                      {alert.state === 'firing' ? (
-                        <div className="relative flex-shrink-0">
-                          <AlertTriangle className="w-5 h-5 text-red-500" />
-                          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full animate-ping" />
-                        </div>
-                      ) : (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-700 truncate">{alert.name || '未命名告警'}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs text-gray-400">{alert.platform}</span>
-                          {alert.severity && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${
-                              alert.severity === 'critical' ? 'bg-red-100 text-red-700' :
-                              alert.severity === 'warning' ? 'bg-yellow-100 text-yellow-700' :
-                              'bg-blue-100 text-blue-700'
-                            }`}>
-                              {alert.severity}
+                <div className="max-h-96 overflow-y-auto rounded-xl border border-gray-100" style={{ scrollbarWidth: 'thin' }}>
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">状态</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">已接入云平台</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">告警优先级</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">告警内容</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">告警对象</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">时间</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {data.alerts.map((alert, i) => (
+                        <tr
+                          key={i}
+                          className={`transition-colors ${
+                            alert.state === 'firing'
+                              ? 'bg-red-50/30 hover:bg-red-50/60'
+                              : 'bg-emerald-50/20 hover:bg-emerald-50/40'
+                          }`}
+                        >
+                          {/* Status icon */}
+                          <td className="px-4 py-3">
+                            {alert.state === 'firing' ? (
+                              <div className="relative inline-flex">
+                                <AlertTriangle className="w-4.5 h-4.5 text-red-500" />
+                                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full animate-ping" />
+                              </div>
+                            ) : (
+                              <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500" />
+                            )}
+                          </td>
+                          {/* Cloud platform */}
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <Cloud className="w-3.5 h-3.5 text-blue-400" />
+                              <span className="text-sm text-gray-700 font-medium">{alert.platform || '-'}</span>
+                            </div>
+                          </td>
+                          {/* Severity */}
+                          <td className="px-4 py-3">
+                            {alert.severity ? (
+                              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full ${
+                                alert.severity === 'critical'
+                                  ? 'bg-red-100 text-red-700 border border-red-200'
+                                  : alert.severity === 'warning'
+                                    ? 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+                                    : 'bg-blue-100 text-blue-700 border border-blue-200'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  alert.severity === 'critical' ? 'bg-red-500' :
+                                  alert.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
+                                }`} />
+                                {alert.severity === 'critical' ? '严重' : alert.severity === 'warning' ? '警告' : '信息'}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-400">-</span>
+                            )}
+                          </td>
+                          {/* Alert content/name */}
+                          <td className="px-4 py-3 max-w-xs">
+                            <p className="text-sm text-gray-700 truncate" title={alert.name}>
+                              {alert.name || '未命名告警'}
+                            </p>
+                          </td>
+                          {/* Alert target */}
+                          <td className="px-4 py-3">
+                            <span className="text-xs text-gray-500 font-mono bg-gray-50 px-1.5 py-0.5 rounded">
+                              {alert.target || '-'}
                             </span>
-                          )}
-                        </div>
-                      </div>
-                      {alert.timestamp && (
-                        <span className="text-xs text-gray-400 flex-shrink-0">
-                          {new Date(alert.timestamp).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                          </td>
+                          {/* Timestamp */}
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {alert.timestamp ? (
+                              <span className="text-xs text-gray-400">
+                                {new Date(alert.timestamp).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-400">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
                 <div className="text-center py-12">

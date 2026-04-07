@@ -1333,6 +1333,7 @@ type AlertItem struct {
 	State     string `json:"state"`
 	Platform  string `json:"platform"`
 	Timestamp string `json:"timestamp"`
+	Target    string `json:"target"`
 }
 
 // fetchEasyStackAlerts fetches alerts from the EasyStack ECMS alert API.
@@ -1340,14 +1341,13 @@ type AlertItem struct {
 //   - GET /apis/monitoring/v1/ecms/alerts          → returns firing (active) alerts
 //   - GET /apis/monitoring/v1/ecms/alerts?status=resolved → returns resolved alerts
 func fetchEasyStackAlerts(client *http.Client, p model.CloudPlatform, token, platformName string) (firing, resolved int, alerts []AlertItem) {
-	if p.ProjectID == "" {
-		return 0, 0, nil
-	}
 	emlaURL := resolveEasyStackServiceURL(p, "emla")
 	baseAlertsURL := fmt.Sprintf("%s/apis/monitoring/v1/ecms/alerts", emlaURL)
+	logger.Log.Infof("[ResourceMonitor] fetchEasyStackAlerts: emlaURL=%s, ProjectID=%s", emlaURL, p.ProjectID)
 
 	// Helper: fetch one page of alerts from a URL and parse the response
 	fetchAlerts := func(url, state string) (int, []AlertItem) {
+		logger.Log.Infof("[ResourceMonitor] Fetching %s alerts from: %s", state, url)
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			logger.Log.Warnf("EasyStack: create alerts request failed (%s): %v", state, err)
@@ -1363,12 +1363,13 @@ func fetchEasyStackAlerts(client *http.Client, p model.CloudPlatform, token, pla
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode >= 400 {
-			logger.Log.Warnf("EasyStack: fetch %s alerts HTTP %d: %s", state, resp.StatusCode, string(body[:min(len(body), 200)]))
+			logger.Log.Warnf("EasyStack: fetch %s alerts HTTP %d: %s", state, resp.StatusCode, string(body[:min(len(body), 500)]))
 			return 0, nil
 		}
-		logger.Log.Infof("EasyStack: fetch %s alerts from %s → HTTP %d (%d bytes)", state, url, resp.StatusCode, len(body))
+		logger.Log.Infof("EasyStack: fetch %s alerts → HTTP %d (%d bytes), body preview: %s", state, resp.StatusCode, len(body), string(body[:min(len(body), 300)]))
 
-		// Parse EasyStack ECMS response
+		// Parse EasyStack ECMS response format:
+		// { "code": 0, "data": { "statistics": { "total": N, ... }, "items": [ ... ] } }
 		var alertsResp struct {
 			Code int `json:"code"`
 			Data struct {
@@ -1379,20 +1380,32 @@ func fetchEasyStackAlerts(client *http.Client, p model.CloudPlatform, token, pla
 					Info     int `json:"info"`
 				} `json:"statistics"`
 				Items []struct {
-					AlertNameCN string `json:"alertNameCN"`
-					AlertNameEN string `json:"alertNameEN"`
-					Severity    string `json:"severity"`
-					Status      string `json:"status"`
-					StartsAt    string `json:"startsAt"`
-					EndsAt      string `json:"endsAt"`
-					UpdatedAt   string `json:"updatedAt"`
+					AlertNameCN    string            `json:"alertNameCN"`
+					AlertNameEN    string            `json:"alertNameEN"`
+					Severity       string            `json:"severity"`
+					Status         string            `json:"status"`
+					StartsAt       string            `json:"startsAt"`
+					EndsAt         string            `json:"endsAt"`
+					UpdatedAt      string            `json:"updatedAt"`
+					Component      string            `json:"component"`
+					Category       string            `json:"category"`
+					Labels         map[string]string `json:"labels"`
+					Annotations    struct {
+						SummaryCN     string `json:"summaryCN"`
+						SummaryEN     string `json:"summaryEN"`
+						DescriptionCN string `json:"descriptionCN"`
+						DescriptionEN string `json:"descriptionEN"`
+					} `json:"annotations"`
 				} `json:"items"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &alertsResp); err != nil {
-			logger.Log.Warnf("EasyStack: parse %s alerts response failed: %v", state, err)
+			logger.Log.Warnf("EasyStack: parse %s alerts response failed: %v, raw body: %s", state, err, string(body[:min(len(body), 500)]))
 			return 0, nil
 		}
+		logger.Log.Infof("EasyStack: %s alerts parsed OK — code=%d, statistics.total=%d, items count=%d",
+			state, alertsResp.Code, alertsResp.Data.Statistics.Total, len(alertsResp.Data.Items))
+
 		var items []AlertItem
 		for _, item := range alertsResp.Data.Items {
 			name := item.AlertNameCN
@@ -1403,12 +1416,24 @@ func fetchEasyStackAlerts(client *http.Client, p model.CloudPlatform, token, pla
 			if ts == "" {
 				ts = item.UpdatedAt
 			}
+			// Build alert target from labels (e.g., instance, host_ip, node_name)
+			target := ""
+			if v, ok := item.Labels["instance"]; ok && v != "" {
+				target = v
+			} else if v, ok := item.Labels["node_name"]; ok && v != "" {
+				target = v
+			} else if v, ok := item.Labels["host_ip"]; ok && v != "" {
+				target = v
+			} else if item.Component != "" {
+				target = item.Component
+			}
 			items = append(items, AlertItem{
 				Name:      name,
 				Severity:  item.Severity,
 				State:     state,
 				Platform:  platformName,
 				Timestamp: ts,
+				Target:    target,
 			})
 		}
 		count := len(items)
